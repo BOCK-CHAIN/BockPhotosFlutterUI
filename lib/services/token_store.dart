@@ -1,18 +1,18 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
 class TokenStore {
-  static const _kAccess = 'access_jwt';
-  static const _kRefresh = 'refresh_jwt';
+  static const _kRefresh = 'refresh_token';
+
+  static String? _inMemoryAccessToken;
 
   Future<void> saveTokens({required String access, required String refresh}) async {
+    _inMemoryAccessToken = access;
     final sp = await SharedPreferences.getInstance();
-    await sp.setString(_kAccess, access);
     await sp.setString(_kRefresh, refresh);
   }
 
   Future<String?> getAccess() async {
-    final sp = await SharedPreferences.getInstance();
-    return sp.getString(_kAccess);
+    return _inMemoryAccessToken;
   }
 
   Future<String?> getRefresh() async {
@@ -21,8 +21,7 @@ class TokenStore {
   }
 
   Future<void> updateAccess(String access) async {
-    final sp = await SharedPreferences.getInstance();
-    await sp.setString(_kAccess, access);
+    _inMemoryAccessToken = access;
   }
 
   Future<void> updateRefresh(String refresh) async {
@@ -31,8 +30,8 @@ class TokenStore {
   }
 
   Future<void> clear() async {
+    _inMemoryAccessToken = null;
     final sp = await SharedPreferences.getInstance();
-    await sp.remove(_kAccess);
     await sp.remove(_kRefresh);
   }
 }

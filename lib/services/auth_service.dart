@@ -11,44 +11,131 @@ class AuthService {
 
   Uri _u(String path) => Uri.parse(AppConfig.apiBaseUrl + path);
 
-  Future<bool> signup(String email, String password) async {
-    final resp = await _http.post(
-      _u('/auth/signup'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'email': email, 'password': password}),
-    );
-    if (resp.statusCode == 200) {
+  Future<AuthResult> signup(String email, String password) async {
+    try {
+      final resp = await _http.post(
+        _u('/api/auth/signup'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'email': email, 'password': password}),
+      );
+      
       final data = jsonDecode(resp.body) as Map<String, dynamic>;
-      final access = data['access_jwt'] as String?;
-      final refresh = data['refresh_jwt'] as String?;
-      if (access != null && refresh != null) {
-        await _store.saveTokens(access: access, refresh: refresh);
-        return true;
+      
+      if (resp.statusCode == 201 || resp.statusCode == 200) {
+        final access = data['accessToken'] as String? ?? (data['data'] is Map<String, dynamic> ? (data['data']['accessToken'] as String?) : null);
+        final refresh = data['refreshToken'] as String? ?? (data['data'] is Map<String, dynamic> ? (data['data']['refreshToken'] as String?) : null);
+        if (access != null && refresh != null) {
+          await _store.saveTokens(access: access, refresh: refresh);
+          return AuthResult.success(data['message'] as String? ?? 'Signup successful');
+        }
       }
+      
+      final message = (data['message'] as String?) ?? (data['error'] as String?) ?? 'Signup failed';
+      return AuthResult.error(message);
+    } catch (e) {
+      return AuthResult.error('Network error: ${e.toString()}');
     }
-    return false;
   }
 
-  Future<bool> login(String email, String password) async {
-    final resp = await _http.post(
-      _u('/auth/login'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'email': email, 'password': password}),
-    );
-    if (resp.statusCode == 200) {
+  Future<AuthResult> login(String email, String password) async {
+    try {
+      final resp = await _http.post(
+        _u('/api/auth/login'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'email': email, 'password': password}),
+      );
+      
       final data = jsonDecode(resp.body) as Map<String, dynamic>;
-      final access = data['access_jwt'] as String?;
-      final refresh = data['refresh_jwt'] as String?;
-      if (access != null && refresh != null) {
-        await _store.saveTokens(access: access, refresh: refresh);
-        return true;
+      
+      if (resp.statusCode == 200) {
+        final access = data['accessToken'] as String? ?? (data['data'] is Map<String, dynamic> ? (data['data']['accessToken'] as String?) : null);
+        final refresh = data['refreshToken'] as String? ?? (data['data'] is Map<String, dynamic> ? (data['data']['refreshToken'] as String?) : null);
+        if (access != null && refresh != null) {
+          await _store.saveTokens(access: access, refresh: refresh);
+          return AuthResult.success(data['message'] as String? ?? 'Login successful');
+        }
       }
+      
+      final message = (data['message'] as String?) ?? (data['error'] as String?) ?? (resp.statusCode == 401 ? 'Invalid credentials' : 'Login failed');
+      return AuthResult.error(message);
+    } catch (e) {
+      return AuthResult.error('Network error: ${e.toString()}');
     }
-    return false;
   }
 
-  Future<void> logout() async {
-    // Optional: call /auth/logout to revoke refresh; otherwise just clear
-    await _store.clear();
+  Future<AuthResult> logout() async {
+    try {
+      final refreshToken = await _store.getRefresh();
+      if (refreshToken != null) {
+        final resp = await _http.post(
+          _u('/api/auth/logout'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'refreshToken': refreshToken}),
+        );
+        
+        if (resp.statusCode == 200) {
+          await _store.clear();
+          return AuthResult.success('Logout successful');
+        }
+      }
+      
+      await _store.clear();
+      return AuthResult.success('Logout successful');
+    } catch (e) {
+      await _store.clear();
+      return AuthResult.error('Logout error: ${e.toString()}');
+    }
+  }
+
+  Future<AuthResult> refreshToken() async {
+    try {
+      final refreshToken = await _store.getRefresh();
+      if (refreshToken == null) {
+        return AuthResult.error('No refresh token available');
+      }
+
+      final resp = await _http.post(
+        _u('/api/auth/refresh'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'refreshToken': refreshToken}),
+      );
+      
+      final data = jsonDecode(resp.body) as Map<String, dynamic>;
+      
+      if (resp.statusCode == 200) {
+        final access = data['accessToken'] as String? ?? (data['data'] is Map<String, dynamic> ? (data['data']['accessToken'] as String?) : null);
+        final refresh = data['refreshToken'] as String? ?? (data['data'] is Map<String, dynamic> ? (data['data']['refreshToken'] as String?) : null);
+        if (access != null && refresh != null) {
+          await _store.saveTokens(access: access, refresh: refresh);
+          return AuthResult.success('Token refreshed');
+        }
+      }
+      
+      final message = (data['message'] as String?) ?? (data['error'] as String?) ?? 'Token refresh failed';
+      return AuthResult.error(message);
+    } catch (e) {
+      return AuthResult.error('Token refresh error: ${e.toString()}');
+    }
+  }
+
+  Future<bool> isLoggedIn() async {
+    final token = await _store.getAccess();
+    return token != null;
+  }
+}
+
+class AuthResult {
+  final bool success;
+  final String message;
+  final String? error;
+
+  AuthResult._({required this.success, required this.message, this.error});
+
+  factory AuthResult.success(String message) {
+    return AuthResult._(success: true, message: message);
+  }
+
+  factory AuthResult.error(String error) {
+    return AuthResult._(success: false, message: error, error: error);
   }
 }

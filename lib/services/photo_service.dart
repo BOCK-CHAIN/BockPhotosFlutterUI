@@ -30,11 +30,11 @@ class PhotoItem {
   }
 }
 
-class PresignResult {
-  final Uri putUrl;
-  final String objectKey;
+class UploadUrlResult {
+  final Uri uploadUrl;
+  final String photoId;
 
-  PresignResult({required this.putUrl, required this.objectKey});
+  UploadUrlResult({required this.uploadUrl, required this.photoId});
 }
 
 class PhotoService {
@@ -47,49 +47,58 @@ class PhotoService {
     if (resp.statusCode != 200) {
       throw Exception('Failed to list photos: ${resp.statusCode}');
     }
-    final data = jsonDecode(resp.body) as List;
-    return data.map((e) => PhotoItem.fromJson(e as Map<String, dynamic>)).toList();
+    final decoded = jsonDecode(resp.body);
+    final list = decoded is Map<String, dynamic>
+        ? (decoded['data'] as List? ?? [])
+        : (decoded as List);
+    return list.map((e) => PhotoItem.fromJson(e as Map<String, dynamic>)).toList();
   }
 
-  /// Returns presigned PUT URL and object key
-  Future<PresignResult> presignUpload(String filename, String mime) async {
+  /// Get upload URL for photo
+  Future<UploadUrlResult> getUploadUrl(String filename, String contentType) async {
     final resp = await _api.post(
-      '/photos/presign-upload',
-      body: jsonEncode({'filename': filename, 'mime': mime}),
+      '/photos/upload-url',
+      body: jsonEncode({
+        'filename': filename,
+        'contentType': contentType,
+      }),
     );
     if (resp.statusCode != 200) {
-      throw Exception('Failed to presign upload: ${resp.statusCode}');
+      throw Exception('Failed to get upload URL: ${resp.statusCode}');
     }
-    final data = jsonDecode(resp.body) as Map<String, dynamic>;
-    final url = Uri.parse(data['put_url'] as String);
-    final key = data['object_key'] as String;
-    return PresignResult(putUrl: url, objectKey: key);
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    final data = (body['data'] as Map<String, dynamic>?) ?? body;
+    final url = Uri.parse(data['url'] as String);
+    final photoId = (data['photoId'] ?? data['photo_id']) as String;
+    return UploadUrlResult(uploadUrl: url, photoId: photoId);
   }
 
-  /// Uploads raw bytes to S3 via presigned URL
-  Future<void> uploadToS3(Uri putUrl, Uint8List bytes, {String? contentType}) async {
+  /// Upload photo to the provided URL
+  Future<void> uploadPhoto(Uri uploadUrl, Uint8List bytes, {String? contentType}) async {
     final resp = await http.put(
-      putUrl,
+      uploadUrl,
       headers: {
         if (contentType != null) 'Content-Type': contentType,
       },
       body: bytes,
     );
-    if (resp.statusCode != 200) {
+    if (resp.statusCode != 200 && resp.statusCode != 201) {
       throw Exception('Upload failed with status ${resp.statusCode}');
     }
   }
 
-  Future<void> confirmUpload(String objectKey, int size) async {
-    final resp = await _api.post(
-      '/photos/confirm',
-      body: jsonEncode({'object_key': objectKey, 'size': size}),
+  /// Update photo metadata
+  Future<void> updatePhoto(String photoId, Map<String, dynamic> updates) async {
+    final resp = await _api.put(
+      '/photos/$photoId',
+      body: jsonEncode(updates),
     );
     if (resp.statusCode != 200) {
-      throw Exception('Confirm failed: ${resp.statusCode}');
+      throw Exception('Failed to update photo: ${resp.statusCode}');
     }
   }
 
+  /// Delete photo
   Future<void> delete(String photoId) async {
     final resp = await _api.delete('/photos/$photoId');
     if (resp.statusCode != 200) {
@@ -97,36 +106,57 @@ class PhotoService {
     }
   }
 
+  /// Pick file from device
   Future<PlatformFile?> pickFile() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
-      allowMultiple: false,
-    );
-    return result?.files.firstOrNull;
-  }
-
-  Future<void> uploadPhoto(PlatformFile file) async {
-    if (file.bytes == null) {
-      throw Exception('File bytes are null');
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        allowMultiple: false,
+      );
+      
+      if (result != null && result.files.isNotEmpty) {
+        return result.files.first;
+      }
+      return null;
+    } catch (e) {
+      throw Exception('Failed to pick file: $e');
     }
-
-    final presignResult = await presignUpload(file.name, file.extension ?? '');
-    await uploadToS3(presignResult.putUrl, file.bytes!, contentType: file.extension);
-    await confirmUpload(presignResult.objectKey, file.size);
   }
 
-  Future<List<Map<String, dynamic>>> listPhotos() async {
-    final photos = await list();
-    return photos.map((photo) => {
-      'id': photo.id,
-      'url': photo.url,
-      'filename': photo.filename,
-      'size': photo.size,
-      'created_at': photo.createdAt.toIso8601String(),
-    }).toList();
-  }
-
-  Future<void> deletePhoto(String id) async {
-    await delete(id);
+  /// Complete photo upload process
+  Future<PhotoItem> uploadPhotoFromFile(PlatformFile file) async {
+    try {
+      const maxBytes = 50 * 1024 * 1024;
+      if (file.size > maxBytes) {
+        throw Exception('File exceeds 50MB limit');
+      }
+      // Get upload URL
+      final contentType = file.extension != null ? 'image/${file.extension}' : 'application/octet-stream';
+      final uploadResult = await getUploadUrl(file.name, contentType);
+      
+      // Upload the file
+      await uploadPhoto(
+        uploadResult.uploadUrl,
+        file.bytes!,
+        contentType: contentType,
+      );
+      
+      // Update photo metadata
+      await updatePhoto(uploadResult.photoId, {
+        'filename': file.name,
+        'size': file.size,
+      });
+      
+      // Return the uploaded photo
+      return PhotoItem(
+        id: uploadResult.photoId,
+        url: uploadResult.uploadUrl.toString(),
+        filename: file.name,
+        size: file.size,
+        createdAt: DateTime.now(),
+      );
+    } catch (e) {
+      throw Exception('Upload failed: $e');
+    }
   }
 }

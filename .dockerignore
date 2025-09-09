@@ -1,0 +1,27 @@
+.git
+.gitignore
+**/.DS_Store
+**/Thumbs.db
+**/.dart_tool
+**/.idea
+**/.vscode
+**/build/**
+android/**
+ios/**
+macos/**
+linux/**
+windows/**
+web/**
+test/**
+README.md
+pubspec.lock
+pubspec.yaml
+analysis_options.yaml
+**/*.iml
+**/gradle/**
+**/node_modules/**
+
+# Keep only built web artifacts when copying context
+!build/web/**
+
+

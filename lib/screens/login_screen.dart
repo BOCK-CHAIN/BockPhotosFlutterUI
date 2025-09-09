@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import '../services/token_store.dart';
+import '../services/health_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -14,6 +15,9 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passwordController = TextEditingController();
   bool _loading = false;
   late final AuthService _authService;
+  final _healthService = HealthService();
+  bool _backendDown = false;
+  DateTime? _lastSubmit;
 
   @override
   void initState() {
@@ -27,16 +31,49 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _login() async {
+    final now = DateTime.now();
+    if (_lastSubmit != null && now.difference(_lastSubmit!).inMilliseconds < 800) {
+      return;
+    }
+    _lastSubmit = now;
+    if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please fill in all fields')),
+      );
+      return;
+    }
+
     setState(() => _loading = true);
     try {
-      await _authService.login(_emailController.text, _passwordController.text);
+      final result = await _authService.login(_emailController.text, _passwordController.text);
       if (!mounted) return;
-      Navigator.pushReplacementNamed(context, '/gallery');
+      
+      if (result.success) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(result.message)),
+        );
+        Navigator.pushReplacementNamed(context, '/gallery');
+      } else {
+        final text = result.error ?? 'Login failed';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(text),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(e.toString())));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: ${e.toString()}'),
+          backgroundColor: Colors.red,
+        ),
+      );
     } finally {
-      setState(() => _loading = false);
+      if (mounted) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -65,6 +102,28 @@ class _LoginScreenState extends State<LoginScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                FutureBuilder(
+                  future: _healthService.check(),
+                  builder: (context, snapshot) {
+                    final ok = snapshot.data?.ok ?? true;
+                    if (!ok) {
+                      return Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(8),
+                        margin: const EdgeInsets.only(bottom: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.shade100,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Text(
+                          'Backend unreachable. Some actions may fail.',
+                          style: TextStyle(color: Colors.black87),
+                        ),
+                      );
+                    }
+                    return const SizedBox.shrink();
+                  },
+                ),
                 const Icon(Icons.lock, size: 60, color: Colors.deepPurple),
                 const SizedBox(height: 12),
                 Text(
@@ -80,6 +139,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 // Email Field
                 TextField(
                   controller: _emailController,
+                  keyboardType: TextInputType.emailAddress,
                   decoration: InputDecoration(
                     prefixIcon: const Icon(Icons.email, color: Colors.deepPurple),
                     labelText: 'Email',
@@ -107,39 +167,33 @@ class _LoginScreenState extends State<LoginScreen> {
                 // Login Button
                 SizedBox(
                   width: double.infinity,
-                  height: 48,
-                  child: _loading
-                      ? const Center(child: CircularProgressIndicator())
-                      : ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: purple,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                          ),
-                          onPressed: _login,
-                          child: const Text(
-                            'Login',
-                            style: TextStyle(
-                                fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white ),
-                          ),
-                        ),
+                  height: 50,
+                  child: ElevatedButton(
+                    onPressed: _loading ? null : _login,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: purple,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    child: _loading
+                        ? const CircularProgressIndicator(color: Colors.white)
+                        : const Text('Login', style: TextStyle(fontSize: 16)),
+                  ),
                 ),
                 const SizedBox(height: 16),
 
-                // Signup link
+                // Sign Up Link
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     const Text("Don't have an account? "),
-                    GestureDetector(
-                      onTap: () => Navigator.pushReplacementNamed(context, '/signup'),
+                    TextButton(
+                      onPressed: () => Navigator.pushNamed(context, '/signup'),
                       child: Text(
-                        "Create one",
-                        style: TextStyle(
-                          color: purple,
-                          fontWeight: FontWeight.w600,
-                        ),
+                        'Sign Up',
+                        style: TextStyle(color: purple),
                       ),
                     ),
                   ],
@@ -150,5 +204,12 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
   }
 }

@@ -1,16 +1,55 @@
 # hynorvixx_psql_frotend
 
-A new Flutter project.
+Flutter app (web-ready) for Hynorvixx backend.
 
-## Getting Started
+## Deployment (EC2)
 
-This project is a starting point for a Flutter application.
+You can deploy the built Flutter web assets behind Nginx. Two options:
 
-A few resources to get you started if this is your first Flutter project:
+### Option A: Docker (Recommended)
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+1) Build web assets locally or in CI:
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+```
+flutter build web --release --dart-define=API_BASE_URL=https://hynorvixx.com
+```
+
+2) Build and run container:
+
+```
+docker build -t hynorvixx-frontend:latest .
+docker run -d --name hynorvixx-frontend -p 80:80 hynorvixx-frontend:latest
+```
+
+3) Put it behind your EC2 security group/ALB/NGINX TLS terminator as needed.
+
+### Option B: Native Nginx on EC2
+
+1) On EC2, install Nginx.
+
+2) Build web assets on your machine or EC2:
+
+```
+flutter build web --release --dart-define=API_BASE_URL=https://hynorvixx.com
+```
+
+3) Copy `build/web/` to `/usr/share/nginx/html/`:
+
+```
+sudo rm -rf /usr/share/nginx/html/*
+sudo cp -r build/web/* /usr/share/nginx/html/
+```
+
+4) Ensure Nginx config serves `index.html` fallback (example in `nginx.conf`).
+
+5) Reload Nginx.
+
+## CORS & HTTPS
+
+- Frontend only calls `https://hynorvixx.com` using Authorization Bearer tokens.
+- Ensure backend `.env` has your frontend origin in `CORS_ORIGIN`.
+
+## Build Tips
+
+- For different environments, override: `--dart-define=API_BASE_URL=...`
+- Tokens are never logged; access token lives in-memory; refresh in SharedPreferences.

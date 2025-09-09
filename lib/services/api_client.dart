@@ -11,7 +11,9 @@ class ApiClient {
   ApiClient(this._store, [http.Client? client]) : _http = client ?? http.Client();
 
   Uri _u(String path, [Map<String, dynamic>? query]) {
-    final uri = Uri.parse(AppConfig.apiBaseUrl + path);
+    final normalizedPath = path.startsWith('/api') ? path : '/api$path';
+    final base = AppConfig.apiBaseUrl;
+    final uri = Uri.parse(base + normalizedPath);
     if (query != null) {
       return uri.replace(queryParameters: query.map((key, value) => MapEntry(key, value.toString())));
     }
@@ -57,15 +59,15 @@ class ApiClient {
       if (refresh == null) return false;
 
       final resp = await _http.post(
-        _u('/auth/refresh'),
+        _u('/api/auth/refresh'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'refresh_jwt': refresh}),
+        body: jsonEncode({'refreshToken': refresh}),
       );
 
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
-        final access = data['access_jwt'] as String?;
-        final newRefresh = data['refresh_jwt'] as String?;
+        final access = data['accessToken'] as String? ?? (data['data'] is Map<String, dynamic> ? (data['data']['accessToken'] as String?) : null);
+        final newRefresh = data['refreshToken'] as String? ?? (data['data'] is Map<String, dynamic> ? (data['data']['refreshToken'] as String?) : null);
         if (access != null && newRefresh != null) {
           await _store.saveTokens(access: access, refresh: newRefresh);
           return true;
@@ -91,6 +93,19 @@ class ApiClient {
   Future<http.Response> post(String path, {Object? body}) async {
     return _authorizedRequest((token) {
       return _http.post(
+        _u(path),
+        headers: {
+          'Content-Type': 'application/json',
+          if (token != null) 'Authorization': 'Bearer $token',
+        },
+        body: body,
+      );
+    });
+  }
+
+  Future<http.Response> put(String path, {Object? body}) async {
+    return _authorizedRequest((token) {
+      return _http.put(
         _u(path),
         headers: {
           'Content-Type': 'application/json',
