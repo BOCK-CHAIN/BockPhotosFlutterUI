@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:file_picker/file_picker.dart';
+import 'package:mime/mime.dart';
 import 'api_client.dart';
 
 class PhotoItem {
@@ -45,7 +46,8 @@ class PhotoService {
   Future<List<PhotoItem>> list() async {
     final resp = await _api.get('/photos');
     if (resp.statusCode != 200) {
-      throw Exception('Failed to list photos: ${resp.statusCode}');
+      final body = resp.body;
+      throw Exception('Failed to list photos: ${resp.statusCode}${body.isNotEmpty ? ' - ' + body : ''}');
     }
     final decoded = jsonDecode(resp.body);
     final list = decoded is Map<String, dynamic>
@@ -63,18 +65,44 @@ class PhotoService {
         'contentType': contentType,
       }),
     );
+
     if (resp.statusCode != 200) {
-      throw Exception('Failed to get upload URL: ${resp.statusCode}');
+      final body = resp.body;
+      throw Exception(
+          'Failed to get upload URL: ${resp.statusCode}${body.isNotEmpty ? ' - ' + body : ''}');
     }
+
     final body = jsonDecode(resp.body) as Map<String, dynamic>;
     final data = (body['data'] as Map<String, dynamic>?) ?? body;
-    final url = Uri.parse(data['url'] as String);
-    final photoId = (data['photoId'] ?? data['photo_id']) as String;
+
+    // Upload URL
+    final urlStr = (data['uploadUrl'] ?? data['url'])?.toString();
+    if (urlStr == null || urlStr.isEmpty) {
+      throw Exception('Upload URL missing in response: $data');
+    }
+    final url = Uri.parse(urlStr);
+
+    // Photo ID (optional → generate fallback)
+    final photoIdVal = data['photoId'] ?? data['photo_id'];
+    if (photoIdVal == null) {
+      throw Exception('photoId missing in response: $data');
+    }
+    final photoId = photoIdVal.toString();
+
     return UploadUrlResult(uploadUrl: url, photoId: photoId);
   }
 
+
   /// Upload photo to the provided URL
   Future<void> uploadPhoto(Uri uploadUrl, Uint8List bytes, {String? contentType}) async {
+    // Debug prints for troubleshooting web uploads
+    // ignore: avoid_print
+    print('Uploading to: $uploadUrl');
+    // ignore: avoid_print
+    print('Bytes length: ${bytes.length}');
+    // ignore: avoid_print
+    print('Content-Type: ${contentType ?? 'none'}');
+
     final resp = await http.put(
       uploadUrl,
       headers: {
@@ -83,7 +111,8 @@ class PhotoService {
       body: bytes,
     );
     if (resp.statusCode != 200 && resp.statusCode != 201) {
-      throw Exception('Upload failed with status ${resp.statusCode}');
+      final respBody = resp.body;
+      throw Exception('S3 upload failed: ${resp.statusCode}${respBody.isNotEmpty ? ' - ' + respBody : ''}');
     }
   }
 
@@ -112,6 +141,7 @@ class PhotoService {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.image,
         allowMultiple: false,
+        withData: true, // required on Web so bytes are available
       );
       
       if (result != null && result.files.isNotEmpty) {
@@ -130,10 +160,30 @@ class PhotoService {
       if (file.size > maxBytes) {
         throw Exception('File exceeds 50MB limit');
       }
-      // Get upload URL
-      final contentType = file.extension != null ? 'image/${file.extension}' : 'application/octet-stream';
+      if (file.bytes == null) {
+        throw Exception('No file data available for upload');
+      }
+
+      // Detect content type (important for S3 presigned URLs)
+      String? detected = lookupMimeType(
+        file.name,
+        headerBytes: file.bytes!.length >= 12 ? file.bytes!.sublist(0, 12) : file.bytes!,
+      );
+      // Some cameras use jpg extension but require image/jpeg
+      if (detected == null && file.extension != null) {
+        detected = 'image/${file.extension}';
+      }
+      final contentType = detected ?? 'application/octet-stream';
+
+      // Get upload URL with the same contentType used for PUT
       final uploadResult = await getUploadUrl(file.name, contentType);
       
+      // Debug before upload
+      // ignore: avoid_print
+      print('Presigned URL: ${uploadResult.uploadUrl}');
+      // ignore: avoid_print
+      print('Uploading ${file.name} (${file.size} bytes)');
+
       // Upload the file
       await uploadPhoto(
         uploadResult.uploadUrl,

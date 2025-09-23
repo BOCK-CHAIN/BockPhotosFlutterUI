@@ -70,7 +70,7 @@ class _UploadScreenState extends State<UploadScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Upload Photo'),
-        backgroundColor: Colors.deepPurple,
+        backgroundColor: const Color(0xFF914294),
         foregroundColor: Colors.white,
       ),
       body: Center(
@@ -96,7 +96,7 @@ class _UploadScreenState extends State<UploadScreen> {
               const Icon(
                 Icons.cloud_upload,
                 size: 100,
-                color: Colors.deepPurple,
+                color: Color(0xFF914294),
               ),
               const SizedBox(height: 24),
               const Text(
@@ -127,7 +127,7 @@ class _UploadScreenState extends State<UploadScreen> {
                   : ElevatedButton.icon(
                       onPressed: _pickAndUpload,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.deepPurple,
+                        backgroundColor: const Color(0xFF914294),
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(
                           horizontal: 32,

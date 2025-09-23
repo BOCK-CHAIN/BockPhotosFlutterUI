@@ -1,55 +1,96 @@
-# hynorvixx_psql_frotend
+# hynorvixx_psql_frontend
 
-Flutter app (web-ready) for Hynorvixx backend.
+**Flutter app (web-ready) for Hynorvixx backend**
 
-## Deployment (EC2)
+---
 
-You can deploy the built Flutter web assets behind Nginx. Two options:
+## 🚀 Deployment on EC2
 
-### Option A: Docker (Recommended)
+Deploy the built Flutter web assets behind Nginx.  
+Choose your deployment method:
 
-1) Build web assets locally or in CI:
+---
 
-```
+## 🐳 Option A: Docker (Recommended)
+
+**1. Build web assets (locally or CI):**
+
 flutter build web --release --dart-define=API_BASE_URL=https://hynorvixx.com
-```
 
-2) Build and run container:
 
-```
+**2. Build and run Docker container:**
+
 docker build -t hynorvixx-frontend:latest .
 docker run -d --name hynorvixx-frontend -p 80:80 hynorvixx-frontend:latest
-```
 
-3) Put it behind your EC2 security group/ALB/NGINX TLS terminator as needed.
 
-### Option B: Native Nginx on EC2
+**3. (Optional) Place behind EC2 Security Group/ALB/Nginx TLS terminator as needed.**
 
-1) On EC2, install Nginx.
+---
 
-2) Build web assets on your machine or EC2:
+## 🖥️ Option B: Native Nginx on EC2
 
-```
+**1. Install Nginx:**
+
+sudo apt update
+sudo apt install -y nginx
+
+
+**2. Build web assets (locally or on EC2):**
+
 flutter build web --release --dart-define=API_BASE_URL=https://hynorvixx.com
-```
 
-3) Copy `build/web/` to `/usr/share/nginx/html/`:
+**3. Copy build output:**
 
-```
 sudo rm -rf /usr/share/nginx/html/*
 sudo cp -r build/web/* /usr/share/nginx/html/
-```
 
-4) Ensure Nginx config serves `index.html` fallback (example in `nginx.conf`).
 
-5) Reload Nginx.
+**4. Ensure Nginx config serves single-page app (index fallback):**  
+Sample `/etc/nginx/sites-available/default`:
 
-## CORS & HTTPS
+server {
+    listen 80;
+    server_name hynorvixx.com www.hynorvixx.com;
 
-- Frontend only calls `https://hynorvixx.com` using Authorization Bearer tokens.
-- Ensure backend `.env` has your frontend origin in `CORS_ORIGIN`.
+    root /var/www/html;
+    index index.html;
 
-## Build Tips
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
 
-- For different environments, override: `--dart-define=API_BASE_URL=...`
-- Tokens are never logged; access token lives in-memory; refresh in SharedPreferences.
+    location ~* \.(?:css|js|jpg|jpeg|gif|png|ico|svg|woff2?)$ {
+        expires 30d;
+        add_header Cache-Control "public";
+    }
+}
+
+
+
+**5. Reload Nginx:**
+
+sudo nginx -t
+sudo systemctl reload nginx
+
+
+---
+
+## 🔑 CORS & HTTPS
+
+- Frontend only communicates with `https://hynorvixx.com` using Authorization Bearer tokens.
+- Ensure backend `.env` includes your frontend domain in `CORS_ORIGIN`.
+
+---
+
+## 🛠️ Build Tips
+
+- For different environments, use:
+
+flutter build web --release --dart-define=API_BASE_URL=https://hynorvixx.com
+
+- Tokens are never logged; access token is stored in-memory, refresh token in SharedPreferences.
+
+---
+
+**Your Flutter web frontend is now ready to deploy!**

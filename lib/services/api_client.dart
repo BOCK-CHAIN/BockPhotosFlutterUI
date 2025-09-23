@@ -68,8 +68,12 @@ class ApiClient {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
         final access = data['accessToken'] as String? ?? (data['data'] is Map<String, dynamic> ? (data['data']['accessToken'] as String?) : null);
         final newRefresh = data['refreshToken'] as String? ?? (data['data'] is Map<String, dynamic> ? (data['data']['refreshToken'] as String?) : null);
-        if (access != null && newRefresh != null) {
-          await _store.saveTokens(access: access, refresh: newRefresh);
+        if (access != null) {
+          // Update access; refresh may or may not be returned depending on backend implementation
+          await _store.updateAccess(access);
+          if (newRefresh != null) {
+            await _store.updateRefresh(newRefresh);
+          }
           return true;
         }
       }

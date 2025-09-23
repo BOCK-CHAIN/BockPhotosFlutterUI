@@ -19,6 +19,7 @@ class _GalleryScreenState extends State<GalleryScreen> {
   late final AuthService _authService;
   final _healthService = HealthService();
   bool _backendOk = true;
+  int _tabIndex = 0; // 0: Photos, 1: Collections, 2: Search
 
   @override
   void initState() {
@@ -77,7 +78,15 @@ class _GalleryScreenState extends State<GalleryScreen> {
   }
 
   void _goToUpload() {
-    Navigator.pushNamed(context, '/upload');
+    Navigator.pushNamed(context, '/upload').then((_) => _fetchPhotos());
+  }
+
+  void _goToNotifications() {
+    Navigator.pushNamed(context, '/notifications');
+  }
+
+  void _goToProfile() {
+    Navigator.pushNamed(context, '/profile');
   }
 
   void _logout() async {
@@ -110,19 +119,22 @@ class _GalleryScreenState extends State<GalleryScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Photo Gallery'),
-        backgroundColor: Colors.deepPurple,
-        foregroundColor: Colors.white,
+        title: const Text('Hynorvixx'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.add_a_photo),
+            icon: const Icon(Icons.add),
+            tooltip: 'Upload',
             onPressed: _goToUpload,
-            tooltip: 'Upload Photo',
           ),
           IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: _logout,
-            tooltip: 'Logout',
+            icon: const Icon(Icons.notifications_none),
+            tooltip: 'Notifications',
+            onPressed: _goToNotifications,
+          ),
+          IconButton(
+            icon: const Icon(Icons.person),
+            tooltip: 'Profile',
+            onPressed: _goToProfile,
           ),
         ],
       ),
@@ -135,117 +147,97 @@ class _GalleryScreenState extends State<GalleryScreen> {
               padding: const EdgeInsets.all(8),
               child: const Text('Backend health degraded or down'),
             ),
-          Expanded(
-            child: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _photos.isEmpty
-              ? const Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.photo_library, size: 64, color: Colors.grey),
-                      SizedBox(height: 16),
-                      Text(
-                        'No photos yet',
-                        style: TextStyle(fontSize: 18, color: Colors.grey),
+          Expanded(child: _buildTabContent()),
+        ],
+      ),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _tabIndex,
+        onTap: (i) {
+          setState(() => _tabIndex = i);
+          if (i == 0) {
+            _fetchPhotos();
+          } else if (i == 1) {
+            Navigator.pushNamed(context, '/collections');
+          } else if (i == 2) {
+            Navigator.pushNamed(context, '/search');
+          }
+        },
+        items: const [
+          BottomNavigationBarItem(icon: Icon(Icons.image), label: 'Photos'),
+          BottomNavigationBarItem(icon: Icon(Icons.collections_bookmark), label: 'Collections'),
+          BottomNavigationBarItem(icon: Icon(Icons.search), label: 'Search'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTabContent() {
+    if (_tabIndex != 0) {
+      return const SizedBox.shrink();
+    }
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_photos.isEmpty) {
+      return const Center(
+        child: Text('No photos yet', style: TextStyle(color: Colors.grey)),
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: _fetchPhotos,
+      child: GridView.builder(
+        padding: const EdgeInsets.all(8),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          crossAxisSpacing: 8,
+          mainAxisSpacing: 8,
+          childAspectRatio: 1,
+        ),
+        itemCount: _photos.length,
+        itemBuilder: (context, index) {
+          final photo = _photos[index];
+          return Card(
+            clipBehavior: Clip.antiAlias,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Image.network(
+                  photo.url,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) {
+                    return Container(
+                      color: Colors.grey[300],
+                      child: const Icon(
+                        Icons.broken_image,
+                        color: Colors.grey,
+                        size: 48,
                       ),
-                      SizedBox(height: 8),
-                      Text(
-                        'Tap the camera icon to upload your first photo',
-                        style: TextStyle(color: Colors.grey),
-                      ),
-                    ],
-                  ),
-                )
-              : RefreshIndicator(
-                  onRefresh: _fetchPhotos,
-                  child: GridView.builder(
-                    padding: const EdgeInsets.all(8),
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 2,
-                      crossAxisSpacing: 8,
-                      mainAxisSpacing: 8,
-                      childAspectRatio: 1,
+                    );
+                  },
+                ),
+                Positioned(
+                  right: 4,
+                  top: 4,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(4),
                     ),
-                    itemCount: _photos.length,
-                    itemBuilder: (context, index) {
-                      final photo = _photos[index];
-                      return Card(
-                        clipBehavior: Clip.antiAlias,
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            Image.network(
-                              photo.url,
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) {
-                                return Container(
-                                  color: Colors.grey[300],
-                                  child: const Icon(
-                                    Icons.broken_image,
-                                    color: Colors.grey,
-                                    size: 48,
-                                  ),
-                                );
-                              },
-                            ),
-                            Positioned(
-                              right: 4,
-                              top: 4,
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.black54,
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: IconButton(
-                                  icon: const Icon(
-                                    Icons.delete,
-                                    color: Colors.white,
-                                    size: 20,
-                                  ),
-                                  onPressed: () => _delete(photo.id),
-                                  tooltip: 'Delete photo',
-                                ),
-                              ),
-                            ),
-                            Positioned(
-                              bottom: 0,
-                              left: 0,
-                              right: 0,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                    colors: [
-                                      Colors.transparent,
-                                      Colors.black54,
-                                    ],
-                                  ),
-                                ),
-                                child: Text(
-                                  photo.filename,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 12,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
+                    child: IconButton(
+                      icon: const Icon(
+                        Icons.delete,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                      onPressed: () => _delete(photo.id),
+                      tooltip: 'Delete photo',
+                    ),
                   ),
                 ),
-          ),
-        ],
+              ],
+            ),
+          );
+        },
       ),
     );
   }
