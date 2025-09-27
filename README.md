@@ -7,48 +7,54 @@
 ## 🚀 Deployment on EC2
 
 Deploy the built Flutter web assets behind Nginx.  
-Choose your deployment method:
 
 ---
 
-## 🐳 Option A: Docker (Recommended)
-
-**1. Build web assets (locally or CI):**
-
+**1. Build frontend locally:**
+```
 flutter build web --release --dart-define=API_BASE_URL=https://hynorvixx.com
+```
+This creates build/web/ folder.
 
 
-**2. Build and run Docker container:**
+**2. Copy build artifacts to EC2:**
+```
+scp -i C:\path\to\key.pem -r build/web/* ubuntu@EC2_PUBLIC_IP:~/hynorvixx-build
+```
 
-docker build -t hynorvixx-frontend:latest .
-docker run -d --name hynorvixx-frontend -p 80:80 hynorvixx-frontend:latest
 
+**3. Install Nginx on EC2:**
 
-**3. (Optional) Place behind EC2 Security Group/ALB/Nginx TLS terminator as needed.**
+SSH into your instance:
+```
+ssh -i C:\path\to\key.pem ubuntu@EC2_PUBLIC_IP
+```
+Install:
 
----
-
-## 🖥️ Option B: Native Nginx on EC2
-
-**1. Install Nginx:**
-
+```
 sudo apt update
 sudo apt install -y nginx
+sudo systemctl enable --now nginx
+```
 
 
-**2. Build web assets (locally or on EC2):**
+**4. Deploy Flutter build to Nginx root:**  
 
-flutter build web --release --dart-define=API_BASE_URL=https://hynorvixx.com
+On EC2:
+```
+sudo rm -rf /var/www/html/*
+sudo cp -r ~/hynorvixx-build/* /var/www/html/
+```
 
-**3. Copy build output:**
+**5. Configure Nginx for SPA (index.html fallback):**  
 
-sudo rm -rf /usr/share/nginx/html/*
-sudo cp -r build/web/* /usr/share/nginx/html/
+Edit default site config:
+```
+sudo nano /etc/nginx/sites-available/default
+```
 
-
-**4. Ensure Nginx config serves single-page app (index fallback):**  
-Sample `/etc/nginx/sites-available/default`:
-
+Replace the server { ... } block with:
+```
 server {
     listen 80;
     server_name hynorvixx.com www.hynorvixx.com;
@@ -65,13 +71,13 @@ server {
         add_header Cache-Control "public";
     }
 }
+```
 
-
-
-**5. Reload Nginx:**
-
+**6. Reload Nginx:**
+```
 sudo nginx -t
 sudo systemctl reload nginx
+```
 
 
 ---
@@ -86,11 +92,24 @@ sudo systemctl reload nginx
 ## 🛠️ Build Tips
 
 - For different environments, use:
-
+```
 flutter build web --release --dart-define=API_BASE_URL=https://hynorvixx.com
+```
 
 - Tokens are never logged; access token is stored in-memory, refresh token in SharedPreferences.
 
 ---
 
 **Your Flutter web frontend is now ready to deploy!**
+
+## Want to contribute?
+
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
+
+## License
+
+This project is licensed under the MIT License.

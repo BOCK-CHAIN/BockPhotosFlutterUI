@@ -4,6 +4,7 @@ import '../services/api_client.dart';
 import '../services/token_store.dart';
 import '../services/auth_service.dart';
 import '../services/health_service.dart';
+import '../widgets/photo_tile.dart';
 
 class GalleryScreen extends StatefulWidget {
   const GalleryScreen({super.key});
@@ -20,19 +21,40 @@ class _GalleryScreenState extends State<GalleryScreen> {
   final _healthService = HealthService();
   bool _backendOk = true;
   int _tabIndex = 0; // 0: Photos, 1: Collections, 2: Search
+  late final TokenStore _tokenStore;
 
   @override
   void initState() {
     super.initState();
-    _initializeServices();
-    _fetchPhotos();
+    () async {
+      await _initializeServices();
+      if (mounted) {
+        await _fetchPhotos();
+      }
+    }();
   }
 
-  void _initializeServices() {
-    final tokenStore = TokenStore();
-    final apiClient = ApiClient(tokenStore);
+  Future<void> _initializeServices() async {
+    _tokenStore = TokenStore();
+    await _tokenStore.init();
+    final apiClient = ApiClient(_tokenStore);
     _photoService = PhotoService(apiClient);
-    _authService = AuthService(tokenStore);
+    _authService = AuthService(_tokenStore);
+    // Mirror login/signup behavior by proactively refreshing once
+    try {
+      await _authService.refreshToken();
+    } catch (_) {}
+    await _ensureToken();
+  }
+
+  Future<void> _ensureToken() async {
+    final token = await _tokenStore.getAccess();
+    if (token == null) {
+      final refreshed = await _authService.refreshToken();
+      if (!refreshed.success) {
+        // No-op; fetch will surface any error
+      }
+    }
   }
 
   Future<void> _fetchPhotos() async {
@@ -47,6 +69,22 @@ class _GalleryScreenState extends State<GalleryScreen> {
         _loading = false;
       });
     } catch (e) {
+      // If unauthorized, attempt a token refresh once and retry
+      final message = e.toString();
+      if (message.contains('401') || message.toLowerCase().contains('access token required')) {
+        try {
+          final refreshed = await _authService.refreshToken();
+          if (refreshed.success) {
+            final photos = await _photoService.list();
+            if (!mounted) return;
+            setState(() {
+              _photos = photos;
+              _loading = false;
+            });
+            return;
+          }
+        } catch (_) {}
+      }
       if (!mounted) return;
       setState(() => _loading = false);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -196,46 +234,14 @@ class _GalleryScreenState extends State<GalleryScreen> {
         itemCount: _photos.length,
         itemBuilder: (context, index) {
           final photo = _photos[index];
-          return Card(
-            clipBehavior: Clip.antiAlias,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                Image.network(
-                  photo.url,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) {
-                    return Container(
-                      color: Colors.grey[300],
-                      child: const Icon(
-                        Icons.broken_image,
-                        color: Colors.grey,
-                        size: 48,
-                      ),
-                    );
-                  },
-                ),
-                Positioned(
-                  right: 4,
-                  top: 4,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.black54,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: IconButton(
-                      icon: const Icon(
-                        Icons.delete,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                      onPressed: () => _delete(photo.id),
-                      tooltip: 'Delete photo',
-                    ),
-                  ),
-                ),
-              ],
-            ),
+          return PhotoTile(
+            imageUrl: photo.url,
+            photoId: photo.id,
+            photoService: _photoService,
+            onDelete: () => _delete(photo.id),
+            onTap: () {
+              // TODO: Implement photo detail view
+            },
           );
         },
       ),

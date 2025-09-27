@@ -1,13 +1,19 @@
 import 'package:flutter/material.dart';
+import '../services/photo_service.dart';
+import 'authenticated_image.dart';
 
 class PhotoTile extends StatelessWidget {
   final String imageUrl;
+  final String photoId;
+  final PhotoService? photoService;
   final VoidCallback? onDelete;
   final VoidCallback? onTap;
 
   const PhotoTile({
     super.key,
     required this.imageUrl,
+    required this.photoId,
+    this.photoService,
     this.onDelete,
     this.onTap,
   });
@@ -32,31 +38,38 @@ class PhotoTile extends StatelessWidget {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              Image.network(
-                imageUrl,
-                fit: BoxFit.cover,
-                loadingBuilder: (context, child, loadingProgress) {
-                  if (loadingProgress == null) return child;
-                  return Center(
-                    child: CircularProgressIndicator(
-                      value: loadingProgress.expectedTotalBytes != null
-                          ? loadingProgress.cumulativeBytesLoaded /
-                              loadingProgress.expectedTotalBytes!
-                          : null,
-                    ),
-                  );
-                },
-                errorBuilder: (context, error, stackTrace) {
-                  return Container(
-                    color: Colors.grey[300],
-                    child: const Icon(
-                      Icons.error,
-                      color: Colors.red,
-                      size: 32,
-                    ),
-                  );
-                },
-              ),
+              photoService != null 
+                ? AuthenticatedImage(
+                    photoService: photoService!,
+                    photoId: photoId,
+                    fallbackUrl: imageUrl,
+                    fit: BoxFit.cover,
+                  )
+                : Image.network(
+                    imageUrl,
+                    fit: BoxFit.cover,
+                    loadingBuilder: (context, child, loadingProgress) {
+                      if (loadingProgress == null) return child;
+                      return Center(
+                        child: CircularProgressIndicator(
+                          value: loadingProgress.expectedTotalBytes != null
+                              ? loadingProgress.cumulativeBytesLoaded /
+                                  loadingProgress.expectedTotalBytes!
+                              : null,
+                        ),
+                      );
+                    },
+                    errorBuilder: (context, error, stackTrace) {
+                      return Container(
+                        color: Colors.grey[300],
+                        child: const Icon(
+                          Icons.error,
+                          color: Colors.red,
+                          size: 32,
+                        ),
+                      );
+                    },
+                  ),
               if (onDelete != null)
                 Positioned(
                   top: 4,

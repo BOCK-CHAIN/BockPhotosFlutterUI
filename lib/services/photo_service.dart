@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:file_picker/file_picker.dart';
 import 'package:mime/mime.dart';
 import 'api_client.dart';
+import '../config.dart';
 
 class PhotoItem {
   final String id;
@@ -21,21 +22,32 @@ class PhotoItem {
   });
 
   factory PhotoItem.fromJson(Map<String, dynamic> json) {
+    // Backend returns DB columns (file_key, original_name, content_type, file_size, created_at)
+    final fileKey = json['file_key'] as String?;
+    final url = json['url'] as String? ??
+        (AppConfig.publicBucketBaseUrl.isNotEmpty && fileKey != null
+            ? '${AppConfig.publicBucketBaseUrl}/$fileKey'
+            : '');
+    final createdRaw = json['created_at'];
+    final createdAt = DateTime.tryParse(createdRaw?.toString() ?? '') ?? DateTime.now();
+    final sizeRaw = json['file_size'] ?? json['size'] ?? 0;
+    final size = sizeRaw is int ? sizeRaw : int.tryParse(sizeRaw.toString()) ?? 0;
     return PhotoItem(
-      id: json['id'] as String,
-      url: json['url'] as String,
-      filename: json['filename'] as String,
-      size: json['size'] as int,
-      createdAt: DateTime.parse(json['created_at'] as String),
+      id: (json['id'] ?? json['photoId'] ?? json['photo_id']).toString(),
+      url: url,
+      filename: (json['original_name'] ?? json['filename'] ?? '').toString(),
+      size: size,
+      createdAt: createdAt,
     );
   }
 }
 
 class UploadUrlResult {
   final Uri uploadUrl;
-  final String photoId;
+  final String? photoId; // optional depending on backend
+  final String? fileKey; // S3 object key
 
-  UploadUrlResult({required this.uploadUrl, required this.photoId});
+  UploadUrlResult({required this.uploadUrl, this.photoId, this.fileKey});
 }
 
 class PhotoService {
@@ -50,19 +62,21 @@ class PhotoService {
       throw Exception('Failed to list photos: ${resp.statusCode}${body.isNotEmpty ? ' - ' + body : ''}');
     }
     final decoded = jsonDecode(resp.body);
+    // Backend returns { photos: [...], pagination: {...} }
     final list = decoded is Map<String, dynamic>
-        ? (decoded['data'] as List? ?? [])
+        ? (decoded['photos'] as List? ?? [])
         : (decoded as List);
     return list.map((e) => PhotoItem.fromJson(e as Map<String, dynamic>)).toList();
   }
 
   /// Get upload URL for photo
-  Future<UploadUrlResult> getUploadUrl(String filename, String contentType) async {
+  Future<UploadUrlResult> getUploadUrl(String filename, String contentType, int fileSize) async {
     final resp = await _api.post(
       '/photos/upload-url',
       body: jsonEncode({
         'filename': filename,
         'contentType': contentType,
+        'fileSize': fileSize,
       }),
     );
 
@@ -82,14 +96,11 @@ class PhotoService {
     }
     final url = Uri.parse(urlStr);
 
-    // Photo ID (optional → generate fallback)
-    final photoIdVal = data['photoId'] ?? data['photo_id'];
-    if (photoIdVal == null) {
-      throw Exception('photoId missing in response: $data');
-    }
-    final photoId = photoIdVal.toString();
+    // Photo ID optional, fileKey provided by backend
+    final photoId = (data['photoId'] ?? data['photo_id'])?.toString();
+    final fileKey = data['fileKey']?.toString();
 
-    return UploadUrlResult(uploadUrl: url, photoId: photoId);
+    return UploadUrlResult(uploadUrl: url, photoId: photoId, fileKey: fileKey);
   }
 
 
@@ -103,11 +114,35 @@ class PhotoService {
     // ignore: avoid_print
     print('Content-Type: ${contentType ?? 'none'}');
 
+    // Only include Content-Type if the presigned URL actually signed it.
+    // Otherwise S3 can reject with SignatureDoesNotMatch if headers differ from the signature.
+    final signedHeadersRaw = uploadUrl.queryParameters['X-Amz-SignedHeaders']
+        ?? uploadUrl.queryParameters['x-amz-signedheaders'];
+    final signedHeaders = (signedHeadersRaw ?? '').toLowerCase();
+    final signedHeaderSet = signedHeaders
+        .split(';')
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toSet();
+    final headers = <String, String>{};
+    if (contentType != null && signedHeaderSet.contains('content-type')) {
+      headers['Content-Type'] = contentType;
+    }
+    // Forward x-amz-meta-* headers that were part of the signature
+    uploadUrl.queryParameters.forEach((k, v) {
+      final lower = k.toLowerCase();
+      if (lower.startsWith('x-amz-meta-') && signedHeaderSet.contains(lower)) {
+        headers[k] = v;
+      }
+      // Common optional signed headers we may need to forward
+      if ((lower == 'x-amz-acl' || lower == 'x-amz-storage-class') && signedHeaderSet.contains(lower)) {
+        headers[k] = v;
+      }
+    });
+
     final resp = await http.put(
       uploadUrl,
-      headers: {
-        if (contentType != null) 'Content-Type': contentType,
-      },
+      headers: headers,
       body: bytes,
     );
     if (resp.statusCode != 200 && resp.statusCode != 201) {
@@ -118,10 +153,7 @@ class PhotoService {
 
   /// Update photo metadata
   Future<void> updatePhoto(String photoId, Map<String, dynamic> updates) async {
-    final resp = await _api.put(
-      '/photos/$photoId',
-      body: jsonEncode(updates),
-    );
+    final resp = await _api.put('/photos/$photoId', body: jsonEncode(updates));
     if (resp.statusCode != 200) {
       throw Exception('Failed to update photo: ${resp.statusCode}');
     }
@@ -132,6 +164,74 @@ class PhotoService {
     final resp = await _api.delete('/photos/$photoId');
     if (resp.statusCode != 200) {
       throw Exception('Delete failed: ${resp.statusCode}');
+    }
+  }
+
+  /// Get authenticated view URL for a photo
+  Future<String> getViewUrl(String photoId) async {
+    try {
+      final resp = await _api.get('/photos/$photoId/view-url');
+      if (resp.statusCode != 200) {
+        final body = resp.body;
+        throw Exception('Failed to get view URL: ${resp.statusCode}${body.isNotEmpty ? ' - ' + body : ''}');
+      }
+      
+      final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
+      final viewUrl = decoded['viewUrl'] ?? decoded['url'] ?? decoded['data']?['viewUrl'] ?? decoded['data']?['url'];
+      
+      if (viewUrl == null || viewUrl.toString().isEmpty) {
+        throw Exception('View URL not found in response');
+      }
+      
+      return viewUrl.toString();
+    } catch (e) {
+      // If the view-url endpoint doesn't exist, try alternative endpoints
+      try {
+        final resp = await _api.get('/photos/$photoId/signed-url');
+        if (resp.statusCode == 200) {
+          final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
+          final signedUrl = decoded['signedUrl'] ?? decoded['url'] ?? decoded['data']?['signedUrl'] ?? decoded['data']?['url'];
+          if (signedUrl != null && signedUrl.toString().isNotEmpty) {
+            return signedUrl.toString();
+          }
+        }
+      } catch (_) {
+        // Continue to next fallback
+      }
+      
+      // If all else fails, rethrow the original error
+      throw Exception('Unable to get authenticated URL for photo: ${e.toString()}');
+    }
+  }
+
+  /// Optionally inform backend to persist metadata after successful S3 upload
+  Future<PhotoItem?> _finalizeUpload({
+    String? fileKey,
+    required String originalName,
+    required String contentType,
+    required int fileSize,
+  }) async {
+    // If the backend exposes an endpoint to persist metadata (e.g., POST /api/photos),
+    // implement it here. Since your shared backend does not show it, we no-op unless fileKey is provided.
+    if (fileKey == null) return null;
+    try {
+      final resp = await _api.post(
+        '/photos',
+        body: jsonEncode({
+          'fileKey': fileKey,
+          'originalName': originalName,
+          'contentType': contentType,
+          'fileSize': fileSize,
+        }),
+      );
+      if (resp.statusCode == 201 || resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        final photoJson = (data['photo'] as Map<String, dynamic>?) ?? data;
+        return PhotoItem.fromJson(photoJson);
+      }
+      return null;
+    } catch (_) {
+      return null;
     }
   }
 
@@ -176,7 +276,7 @@ class PhotoService {
       final contentType = detected ?? 'application/octet-stream';
 
       // Get upload URL with the same contentType used for PUT
-      final uploadResult = await getUploadUrl(file.name, contentType);
+      final uploadResult = await getUploadUrl(file.name, contentType, file.size);
       
       // Debug before upload
       // ignore: avoid_print
@@ -191,16 +291,30 @@ class PhotoService {
         contentType: contentType,
       );
       
-      // Update photo metadata
-      await updatePhoto(uploadResult.photoId, {
-        'filename': file.name,
-        'size': file.size,
-      });
-      
-      // Return the uploaded photo
+      // Persist in backend if endpoint exists (POST /photos). If not available, fall back to constructing URL
+      try {
+        final created = await _finalizeUpload(
+          fileKey: uploadResult.fileKey,
+          originalName: file.name,
+          contentType: contentType,
+          fileSize: file.size,
+        );
+        if (created != null) {
+          return created;
+        }
+      } catch (_) {
+        // If finalize not available or fails, proceed to fallback
+      }
+
+      // Fallback: construct a displayable item using fileKey/public base URL
+      String url = uploadResult.uploadUrl.toString();
+      if (uploadResult.fileKey != null && AppConfig.publicBucketBaseUrl.isNotEmpty) {
+        url = '${AppConfig.publicBucketBaseUrl}/${uploadResult.fileKey}';
+      }
+
       return PhotoItem(
-        id: uploadResult.photoId,
-        url: uploadResult.uploadUrl.toString(),
+        id: uploadResult.photoId ?? uploadResult.fileKey ?? DateTime.now().millisecondsSinceEpoch.toString(),
+        url: url,
         filename: file.name,
         size: file.size,
         createdAt: DateTime.now(),

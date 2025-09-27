@@ -48,7 +48,9 @@ class ApiClient {
       return request(newToken);
     }
 
-    return request(null);
+    // Always try to include token if available, even if refresh failed
+    final fallbackToken = await _store.getAccess();
+    return request(fallbackToken);
   }
 
   Future<bool> _refreshToken() async {
@@ -85,23 +87,28 @@ class ApiClient {
 
   Future<http.Response> get(String path, {Map<String, dynamic>? query}) async {
     return _authorizedRequest((token) {
+      final headers = <String, String>{};
+      if (token != null) {
+        headers['Authorization'] = 'Bearer $token';
+      }
       return _http.get(
         _u(path, query),
-        headers: {
-          if (token != null) 'Authorization': 'Bearer $token',
-        },
+        headers: headers,
       );
     });
   }
 
   Future<http.Response> post(String path, {Object? body}) async {
     return _authorizedRequest((token) {
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+      };
+      if (token != null) {
+        headers['Authorization'] = 'Bearer $token';
+      }
       return _http.post(
         _u(path),
-        headers: {
-          'Content-Type': 'application/json',
-          if (token != null) 'Authorization': 'Bearer $token',
-        },
+        headers: headers,
         body: body,
       );
     });
@@ -109,12 +116,15 @@ class ApiClient {
 
   Future<http.Response> put(String path, {Object? body}) async {
     return _authorizedRequest((token) {
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+      };
+      if (token != null) {
+        headers['Authorization'] = 'Bearer $token';
+      }
       return _http.put(
         _u(path),
-        headers: {
-          'Content-Type': 'application/json',
-          if (token != null) 'Authorization': 'Bearer $token',
-        },
+        headers: headers,
         body: body,
       );
     });
@@ -122,12 +132,15 @@ class ApiClient {
 
   Future<http.Response> delete(String path) async {
     return _authorizedRequest((token) {
+      final headers = <String, String>{};
+      if (token != null) {
+        headers['Authorization'] = 'Bearer $token';
+      }
       return _http.delete(
         _u(path),
-        headers: {
-          if (token != null) 'Authorization': 'Bearer $token',
-        },
+        headers: headers,
       );
     });
   }
+
 }
