@@ -12,6 +12,7 @@ class PhotoItem {
   final String filename;
   final int size;
   final DateTime createdAt;
+  final String? fileKey; // S3 object key for authenticated URLs
 
   PhotoItem({
     required this.id,
@@ -19,6 +20,7 @@ class PhotoItem {
     required this.filename,
     required this.size,
     required this.createdAt,
+    this.fileKey,
   });
 
   factory PhotoItem.fromJson(Map<String, dynamic> json) {
@@ -38,6 +40,7 @@ class PhotoItem {
       filename: (json['original_name'] ?? json['filename'] ?? '').toString(),
       size: size,
       createdAt: createdAt,
+      fileKey: fileKey,
     );
   }
 }
@@ -167,10 +170,10 @@ class PhotoService {
     }
   }
 
-  /// Get authenticated view URL for a photo
-  Future<String> getViewUrl(String photoId) async {
+  /// Get authenticated view URL for a photo using S3 key
+  Future<String> getViewUrl(String s3Key) async {
     try {
-      final resp = await _api.get('/photos/$photoId/view-url');
+      final resp = await _api.get('/photos/view-url', query: {'key': s3Key});
       if (resp.statusCode != 200) {
         final body = resp.body;
         throw Exception('Failed to get view URL: ${resp.statusCode}${body.isNotEmpty ? ' - ' + body : ''}');
@@ -185,22 +188,8 @@ class PhotoService {
       
       return viewUrl.toString();
     } catch (e) {
-      // If the view-url endpoint doesn't exist, try alternative endpoints
-      try {
-        final resp = await _api.get('/photos/$photoId/signed-url');
-        if (resp.statusCode == 200) {
-          final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
-          final signedUrl = decoded['signedUrl'] ?? decoded['url'] ?? decoded['data']?['signedUrl'] ?? decoded['data']?['url'];
-          if (signedUrl != null && signedUrl.toString().isNotEmpty) {
-            return signedUrl.toString();
-          }
-        }
-      } catch (_) {
-        // Continue to next fallback
-      }
-      
       // If all else fails, rethrow the original error
-      throw Exception('Unable to get authenticated URL for photo: ${e.toString()}');
+      throw Exception('Unable to get authenticated URL for S3 key $s3Key: ${e.toString()}');
     }
   }
 
@@ -318,6 +307,7 @@ class PhotoService {
         filename: file.name,
         size: file.size,
         createdAt: DateTime.now(),
+        fileKey: uploadResult.fileKey,
       );
     } catch (e) {
       throw Exception('Upload failed: $e');

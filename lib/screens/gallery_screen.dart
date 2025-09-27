@@ -237,6 +237,7 @@ class _GalleryScreenState extends State<GalleryScreen> {
           return PhotoTile(
             imageUrl: photo.url,
             photoId: photo.id,
+            fileKey: photo.fileKey,
             photoService: _photoService,
             onDelete: () => _delete(photo.id),
             onTap: () {

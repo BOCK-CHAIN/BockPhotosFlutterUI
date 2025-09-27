@@ -3,7 +3,7 @@ import '../services/photo_service.dart';
 
 class AuthenticatedImage extends StatefulWidget {
   final PhotoService photoService;
-  final String photoId;
+  final String? fileKey;
   final String fallbackUrl;
   final BoxFit fit;
   final Widget? loadingWidget;
@@ -12,7 +12,7 @@ class AuthenticatedImage extends StatefulWidget {
   const AuthenticatedImage({
     super.key,
     required this.photoService,
-    required this.photoId,
+    this.fileKey,
     required this.fallbackUrl,
     this.fit = BoxFit.cover,
     this.loadingWidget,
@@ -35,8 +35,19 @@ class _AuthenticatedImageState extends State<AuthenticatedImage> {
   }
 
   Future<void> _loadAuthenticatedUrl() async {
+    // If no fileKey available, skip authentication and use fallback
+    if (widget.fileKey == null || widget.fileKey!.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _error = null;
+        });
+      }
+      return;
+    }
+
     try {
-      final url = await widget.photoService.getViewUrl(widget.photoId);
+      final url = await widget.photoService.getViewUrl(widget.fileKey!);
       if (mounted) {
         setState(() {
           _authenticatedUrl = url;

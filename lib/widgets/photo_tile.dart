@@ -5,6 +5,7 @@ import 'authenticated_image.dart';
 class PhotoTile extends StatelessWidget {
   final String imageUrl;
   final String photoId;
+  final String? fileKey;
   final PhotoService? photoService;
   final VoidCallback? onDelete;
   final VoidCallback? onTap;
@@ -13,6 +14,7 @@ class PhotoTile extends StatelessWidget {
     super.key,
     required this.imageUrl,
     required this.photoId,
+    this.fileKey,
     this.photoService,
     this.onDelete,
     this.onTap,
@@ -41,7 +43,7 @@ class PhotoTile extends StatelessWidget {
               photoService != null 
                 ? AuthenticatedImage(
                     photoService: photoService!,
-                    photoId: photoId,
+                    fileKey: fileKey,
                     fallbackUrl: imageUrl,
                     fit: BoxFit.cover,
                   )
