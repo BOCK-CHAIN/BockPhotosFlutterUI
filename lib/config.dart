@@ -1,7 +1,7 @@
 class AppConfig {
   static const String apiBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://YOUR_EC2_IP_ADDRESS', // Replace YOUR_EC2_IP_ADDRESS with your actual EC2 IP
+    defaultValue: 'http://localhost:3000',
   );
 
   // If your S3 bucket is public (or fronted by CDN), set this to serve images

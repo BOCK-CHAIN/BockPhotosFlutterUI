@@ -20,8 +20,10 @@ class _GalleryScreenState extends State<GalleryScreen> {
   late final AuthService _authService;
   final _healthService = HealthService();
   bool _backendOk = true;
-  int _tabIndex = 0; // 0: Photos, 1: Collections, 2: Search
+  bool _dismissedOfflineBanner = false;
   late final TokenStore _tokenStore;
+  bool _selectionMode = false;
+  final Set<String> _selectedPhotoIds = <String>{};
 
   @override
   void initState() {
@@ -101,6 +103,7 @@ class _GalleryScreenState extends State<GalleryScreen> {
       await _photoService.delete(id);
       if (!mounted) return;
       await _fetchPhotos();
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Photo deleted successfully')),
       );
@@ -115,6 +118,34 @@ class _GalleryScreenState extends State<GalleryScreen> {
     }
   }
 
+  Future<void> _moveToTrash(String id) async {
+    try {
+      await _photoService.moveToTrash(id);
+      await _fetchPhotos();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Moved to Trash')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Move to Trash failed: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  Future<void> _toggleStar(PhotoItem photo) async {
+    try {
+      await _photoService.setStarred(photo.id, !photo.isStarred);
+      await _fetchPhotos();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Star update failed: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
   void _goToUpload() {
     Navigator.pushNamed(context, '/upload').then((_) => _fetchPhotos());
   }
@@ -125,6 +156,47 @@ class _GalleryScreenState extends State<GalleryScreen> {
 
   void _goToProfile() {
     Navigator.pushNamed(context, '/profile');
+  }
+
+  Future<void> _addSelectedToCollection() async {
+    if (_selectedPhotoIds.isEmpty) return;
+    try {
+      final collections = await _photoService.listCollections();
+      if (!mounted) return;
+      if (collections.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Create a collection first in Collections')),
+        );
+        return;
+      }
+      final collectionId = await showDialog<String>(
+        context: context,
+        builder: (context) => SimpleDialog(
+          title: const Text('Add to collection'),
+          children: collections
+              .map((c) => SimpleDialogOption(
+                    onPressed: () => Navigator.pop(context, c.id),
+                    child: Text(c.name),
+                  ))
+              .toList(),
+        ),
+      );
+      if (collectionId == null) return;
+      await _photoService.addPhotosToCollection(collectionId, _selectedPhotoIds.toList());
+      if (!mounted) return;
+      setState(() {
+        _selectionMode = false;
+        _selectedPhotoIds.clear();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Photos added to collection')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed: $e'), backgroundColor: Colors.red),
+      );
+    }
   }
 
   void _logout() async {
@@ -157,8 +229,25 @@ class _GalleryScreenState extends State<GalleryScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Hynorvixx'),
+        title: Text(_selectionMode ? '${_selectedPhotoIds.length} selected' : 'Nexus Photo'),
         actions: [
+          if (_selectionMode)
+            IconButton(
+              icon: const Icon(Icons.playlist_add),
+              tooltip: 'Add to collection',
+              onPressed: _addSelectedToCollection,
+            ),
+          if (_selectionMode)
+            IconButton(
+              icon: const Icon(Icons.close),
+              tooltip: 'Cancel selection',
+              onPressed: () {
+                setState(() {
+                  _selectionMode = false;
+                  _selectedPhotoIds.clear();
+                });
+              },
+            ),
           IconButton(
             icon: const Icon(Icons.add),
             tooltip: 'Upload',
@@ -178,41 +267,67 @@ class _GalleryScreenState extends State<GalleryScreen> {
       ),
       body: Column(
         children: [
-          if (!_backendOk)
+          if (!_backendOk && !_dismissedOfflineBanner)
             Container(
               width: double.infinity,
               color: Colors.amber.shade100,
-              padding: const EdgeInsets.all(8),
-              child: const Text('Backend health degraded or down'),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Row(
+                children: [
+                  const Expanded(child: Text('Backend offline. Some features may not work.')),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () => setState(() => _dismissedOfflineBanner = true),
+                  ),
+                ],
+              ),
             ),
-          Expanded(child: _buildTabContent()),
+          Expanded(child: _buildPhotoContent()),
         ],
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _tabIndex,
-        onTap: (i) {
-          setState(() => _tabIndex = i);
-          if (i == 0) {
-            _fetchPhotos();
-          } else if (i == 1) {
-            Navigator.pushNamed(context, '/collections');
-          } else if (i == 2) {
-            Navigator.pushNamed(context, '/search');
-          }
-        },
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.image), label: 'Photos'),
-          BottomNavigationBarItem(icon: Icon(Icons.collections_bookmark), label: 'Collections'),
-          BottomNavigationBarItem(icon: Icon(Icons.search), label: 'Search'),
-        ],
+      drawer: Drawer(
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            const DrawerHeader(
+              decoration: BoxDecoration(color: Color(0xFF7B2D8B)),
+              child: Align(
+                alignment: Alignment.bottomLeft,
+                child: Text('Nexus Photos', style: TextStyle(color: Colors.white, fontSize: 20)),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.collections_bookmark),
+              title: const Text('Collections'),
+              onTap: () => Navigator.pushNamed(context, '/collections'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.star),
+              title: const Text('Favourites'),
+              onTap: () => Navigator.pushNamed(context, '/favourites'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: const Text('Trash'),
+              onTap: () => Navigator.pushNamed(context, '/trash'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.search),
+              title: const Text('Search'),
+              onTap: () => Navigator.pushNamed(context, '/search'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.logout),
+              title: const Text('Logout'),
+              onTap: _logout,
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildTabContent() {
-    if (_tabIndex != 0) {
-      return const SizedBox.shrink();
-    }
+  Widget _buildPhotoContent() {
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -240,8 +355,30 @@ class _GalleryScreenState extends State<GalleryScreen> {
             fileKey: photo.fileKey,
             photoService: _photoService,
             onDelete: () => _delete(photo.id),
+            onMoveToTrash: () => _moveToTrash(photo.id),
+            onToggleStar: () => _toggleStar(photo),
+            isStarred: photo.isStarred,
+            selectionMode: _selectionMode,
+            selected: _selectedPhotoIds.contains(photo.id),
+            onLongPress: () {
+              setState(() {
+                _selectionMode = true;
+                _selectedPhotoIds.add(photo.id);
+              });
+            },
             onTap: () {
-              // TODO: Implement photo detail view
+              if (_selectionMode) {
+                setState(() {
+                  if (_selectedPhotoIds.contains(photo.id)) {
+                    _selectedPhotoIds.remove(photo.id);
+                  } else {
+                    _selectedPhotoIds.add(photo.id);
+                  }
+                  if (_selectedPhotoIds.isEmpty) {
+                    _selectionMode = false;
+                  }
+                });
+              }
             },
           );
         },

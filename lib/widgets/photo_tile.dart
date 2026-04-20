@@ -9,6 +9,12 @@ class PhotoTile extends StatelessWidget {
   final PhotoService? photoService;
   final VoidCallback? onDelete;
   final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
+  final VoidCallback? onMoveToTrash;
+  final VoidCallback? onToggleStar;
+  final bool isStarred;
+  final bool selected;
+  final bool selectionMode;
 
   const PhotoTile({
     super.key,
@@ -18,12 +24,19 @@ class PhotoTile extends StatelessWidget {
     this.photoService,
     this.onDelete,
     this.onTap,
+    this.onLongPress,
+    this.onMoveToTrash,
+    this.onToggleStar,
+    this.isStarred = false,
+    this.selected = false,
+    this.selectionMode = false,
   });
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
+      onLongPress: onLongPress,
       child: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(8),
@@ -82,18 +95,81 @@ class PhotoTile extends StatelessWidget {
                       shape: BoxShape.circle,
                     ),
                     child: IconButton(
-                      icon: const Icon(
-                        Icons.delete,
-                        color: Colors.red,
+                      icon: Icon(
+                        selectionMode ? Icons.check_circle : Icons.more_vert,
+                        color: selectionMode ? const Color(0xFF7B2D8B) : Colors.black87,
                         size: 20,
                       ),
-                      onPressed: onDelete,
+                      onPressed: selectionMode
+                          ? onTap
+                          : () async {
+                              final value = await showMenu<String>(
+                                context: context,
+                                position: const RelativeRect.fromLTRB(1000, 100, 8, 0),
+                                items: [
+                                  PopupMenuItem(
+                                    value: 'star',
+                                    child: Row(
+                                      children: [
+                                        Icon(isStarred ? Icons.star : Icons.star_border, color: Colors.amber),
+                                        const SizedBox(width: 8),
+                                        Text(isStarred ? 'Unstar' : 'Star'),
+                                      ],
+                                    ),
+                                  ),
+                                  const PopupMenuItem(
+                                    value: 'trash',
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.delete_outline, color: Colors.red),
+                                        SizedBox(width: 8),
+                                        Text('Move to Trash'),
+                                      ],
+                                    ),
+                                  ),
+                                  const PopupMenuItem(
+                                    value: 'delete',
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.delete_forever, color: Colors.red),
+                                        SizedBox(width: 8),
+                                        Text('Delete permanently'),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              );
+                              if (value == 'star') onToggleStar?.call();
+                              if (value == 'trash') onMoveToTrash?.call();
+                              if (value == 'delete') onDelete?.call();
+                            },
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(
                         minWidth: 32,
                         minHeight: 32,
                       ),
                     ),
+                  ),
+                ),
+              Positioned(
+                bottom: 4,
+                right: 4,
+                child: IconButton(
+                  icon: Icon(
+                    isStarred ? Icons.star : Icons.star_border,
+                    color: Colors.amber,
+                  ),
+                  onPressed: onToggleStar,
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.white.withValues(alpha: 0.9),
+                  ),
+                ),
+              ),
+              if (selected)
+                Container(
+                  decoration: BoxDecoration(
+                    border: Border.all(color: const Color(0xFF7B2D8B), width: 3),
+                    borderRadius: BorderRadius.circular(8),
                   ),
                 ),
             ],

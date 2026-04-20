@@ -13,6 +13,9 @@ class PhotoItem {
   final int size;
   final DateTime createdAt;
   final String? fileKey; // S3 object key for authenticated URLs
+  final bool isDeleted;
+  final bool isStarred;
+  final DateTime? deletedAt;
 
   PhotoItem({
     required this.id,
@@ -21,6 +24,9 @@ class PhotoItem {
     required this.size,
     required this.createdAt,
     this.fileKey,
+    this.isDeleted = false,
+    this.isStarred = false,
+    this.deletedAt,
   });
 
   factory PhotoItem.fromJson(Map<String, dynamic> json) {
@@ -34,6 +40,7 @@ class PhotoItem {
     final createdAt = DateTime.tryParse(createdRaw?.toString() ?? '') ?? DateTime.now();
     final sizeRaw = json['file_size'] ?? json['size'] ?? 0;
     final size = sizeRaw is int ? sizeRaw : int.tryParse(sizeRaw.toString()) ?? 0;
+    final deletedAtRaw = json['deleted_at'];
     return PhotoItem(
       id: (json['id'] ?? json['photoId'] ?? json['photo_id']).toString(),
       url: url,
@@ -41,6 +48,34 @@ class PhotoItem {
       size: size,
       createdAt: createdAt,
       fileKey: fileKey,
+      isDeleted: json['is_deleted'] == true,
+      isStarred: json['is_starred'] == true,
+      deletedAt: deletedAtRaw == null ? null : DateTime.tryParse(deletedAtRaw.toString()),
+    );
+  }
+}
+
+class CollectionItem {
+  final String id;
+  final String name;
+  final int photoCount;
+  final String? coverPhotoUrl;
+
+  CollectionItem({
+    required this.id,
+    required this.name,
+    required this.photoCount,
+    this.coverPhotoUrl,
+  });
+
+  factory CollectionItem.fromJson(Map<String, dynamic> json) {
+    final rawCount = json['photoCount'] ?? json['photo_count'] ?? 0;
+    final count = rawCount is int ? rawCount : int.tryParse(rawCount.toString()) ?? 0;
+    return CollectionItem(
+      id: json['id'].toString(),
+      name: (json['name'] ?? '').toString(),
+      photoCount: count,
+      coverPhotoUrl: (json['coverPhotoUrl'] ?? json['cover_photo_url'])?.toString(),
     );
   }
 }
@@ -70,6 +105,87 @@ class PhotoService {
         ? (decoded['photos'] as List? ?? [])
         : (decoded as List);
     return list.map((e) => PhotoItem.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  Future<List<PhotoItem>> listTrash() async {
+    final resp = await _api.get('/photos/trash');
+    if (resp.statusCode != 200) {
+      throw Exception('Failed to list trash: ${resp.statusCode}');
+    }
+    final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
+    final list = decoded['photos'] as List? ?? [];
+    return list.map((e) => PhotoItem.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  Future<List<PhotoItem>> listFavourites() async {
+    final resp = await _api.get('/photos/favourites');
+    if (resp.statusCode != 200) {
+      throw Exception('Failed to list favourites: ${resp.statusCode}');
+    }
+    final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
+    final list = decoded['photos'] as List? ?? [];
+    return list.map((e) => PhotoItem.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  Future<void> moveToTrash(String photoId) async {
+    final resp = await _api.put('/photos/$photoId/trash', body: jsonEncode({}));
+    if (resp.statusCode != 200) {
+      throw Exception('Move to trash failed: ${resp.statusCode}');
+    }
+  }
+
+  Future<void> restoreFromTrash(String photoId) async {
+    final resp = await _api.put('/photos/$photoId/restore', body: jsonEncode({}));
+    if (resp.statusCode != 200) {
+      throw Exception('Restore failed: ${resp.statusCode}');
+    }
+  }
+
+  Future<void> setStarred(String photoId, bool isStarred) async {
+    final resp = await _api.put(
+      '/photos/$photoId/star',
+      body: jsonEncode({'isStarred': isStarred}),
+    );
+    if (resp.statusCode != 200) {
+      throw Exception('Star update failed: ${resp.statusCode}');
+    }
+  }
+
+  Future<List<CollectionItem>> listCollections() async {
+    final resp = await _api.get('/collections');
+    if (resp.statusCode != 200) {
+      throw Exception('Failed to list collections: ${resp.statusCode}');
+    }
+    final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
+    final list = decoded['collections'] as List? ?? [];
+    return list.map((e) => CollectionItem.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  Future<void> createCollection(String name, {String? coverPhotoId}) async {
+    final resp = await _api.post(
+      '/collections',
+      body: jsonEncode({'name': name, 'coverPhotoId': coverPhotoId}),
+    );
+    if (resp.statusCode != 201 && resp.statusCode != 200) {
+      throw Exception('Failed to create collection: ${resp.statusCode}');
+    }
+  }
+
+  Future<void> addPhotosToCollection(String collectionId, List<String> photoIds) async {
+    final resp = await _api.post(
+      '/collections/$collectionId/photos',
+      body: jsonEncode({'photoIds': photoIds}),
+    );
+    if (resp.statusCode != 200) {
+      throw Exception('Failed to add photos to collection: ${resp.statusCode}');
+    }
+  }
+
+  Future<void> removePhotoFromCollection(String collectionId, String photoId) async {
+    final resp = await _api.delete('/collections/$collectionId/photos/$photoId');
+    if (resp.statusCode != 200) {
+      throw Exception('Failed to remove photo from collection: ${resp.statusCode}');
+    }
   }
 
   /// Get upload URL for photo
@@ -104,6 +220,31 @@ class PhotoService {
     final fileKey = data['fileKey']?.toString();
 
     return UploadUrlResult(uploadUrl: url, photoId: photoId, fileKey: fileKey);
+  }
+
+  Future<PhotoItem> uploadLocalPhoto({
+    required String filename,
+    required String contentType,
+    required Uint8List bytes,
+  }) async {
+    final resp = await _api.post(
+      '/photos/upload-local',
+      body: jsonEncode({
+        'filename': filename,
+        'contentType': contentType,
+        'fileSize': bytes.length,
+        'fileDataBase64': base64Encode(bytes),
+      }),
+    );
+
+    if (resp.statusCode != 201 && resp.statusCode != 200) {
+      final body = resp.body;
+      throw Exception('Local upload failed: ${resp.statusCode}${body.isNotEmpty ? ' - ' + body : ''}');
+    }
+
+    final data = jsonDecode(resp.body) as Map<String, dynamic>;
+    final photoJson = (data['photo'] as Map<String, dynamic>?) ?? data;
+    return PhotoItem.fromJson(photoJson);
   }
 
 
@@ -264,23 +405,24 @@ class PhotoService {
       }
       final contentType = detected ?? 'application/octet-stream';
 
-      // Get upload URL with the same contentType used for PUT
-      final uploadResult = await getUploadUrl(file.name, contentType, file.size);
-      
-      // Debug before upload
-      // ignore: avoid_print
-      print('Presigned URL: ${uploadResult.uploadUrl}');
-      // ignore: avoid_print
-      print('Uploading ${file.name} (${file.size} bytes)');
+      try {
+        // Prefer local upload endpoint to avoid S3/CORS issues in local development.
+        return await uploadLocalPhoto(
+          filename: file.name,
+          contentType: contentType,
+          bytes: file.bytes!,
+        );
+      } catch (_) {
+        // Fallback to legacy S3 flow when local endpoint is unavailable.
+      }
 
-      // Upload the file
+      final uploadResult = await getUploadUrl(file.name, contentType, file.size);
       await uploadPhoto(
         uploadResult.uploadUrl,
         file.bytes!,
         contentType: contentType,
       );
-      
-      // Persist in backend if endpoint exists (POST /photos). If not available, fall back to constructing URL
+
       try {
         final created = await _finalizeUpload(
           fileKey: uploadResult.fileKey,
@@ -288,14 +430,9 @@ class PhotoService {
           contentType: contentType,
           fileSize: file.size,
         );
-        if (created != null) {
-          return created;
-        }
-      } catch (_) {
-        // If finalize not available or fails, proceed to fallback
-      }
+        if (created != null) return created;
+      } catch (_) {}
 
-      // Fallback: construct a displayable item using fileKey/public base URL
       String url = uploadResult.uploadUrl.toString();
       if (uploadResult.fileKey != null && AppConfig.publicBucketBaseUrl.isNotEmpty) {
         url = '${AppConfig.publicBucketBaseUrl}/${uploadResult.fileKey}';

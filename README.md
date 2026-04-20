@@ -4,6 +4,27 @@
 
 ---
 
+## Run Locally in Chrome
+
+1. Install Flutter dependencies:
+```
+flutter pub get
+```
+
+2. Start app in Chrome and point to local backend:
+```
+flutter run -d chrome --dart-define=API_BASE_URL=http://localhost:3000
+```
+
+3. Build web bundle (optional):
+```
+flutter build web --release --dart-define=API_BASE_URL=http://localhost:3000
+```
+
+> Make sure backend is running on `http://localhost:3000`.
+
+---
+
 ## 🚀 Deployment on EC2
 
 Deploy the built Flutter web assets behind Nginx.  

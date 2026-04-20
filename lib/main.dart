@@ -4,6 +4,8 @@ import 'screens/notifications_screen.dart';
 import 'screens/collections_screen.dart';
 import 'screens/search_screen.dart';
 import 'screens/profile_screen.dart';
+import 'screens/favourites_screen.dart';
+import 'screens/trash_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/signup_screen.dart';
 import 'screens/gallery_screen.dart';
@@ -53,6 +55,8 @@ class MyApp extends StatelessWidget {
         '/collections': (context) => const CollectionsScreen(),
         '/search': (context) => const SearchScreen(),
         '/profile': (context) => const ProfileScreen(),
+        '/favourites': (context) => const FavouritesScreen(),
+        '/trash': (context) => const TrashScreen(),
       },
     );
   }
