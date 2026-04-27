@@ -12,9 +12,14 @@ class PhotoTile extends StatelessWidget {
   final VoidCallback? onLongPress;
   final VoidCallback? onMoveToTrash;
   final VoidCallback? onToggleStar;
+  final VoidCallback? onShare;
+  final VoidCallback? onAddToCollection;
   final bool isStarred;
   final bool selected;
   final bool selectionMode;
+  final bool isTrashView;
+  final VoidCallback? onRestore;
+  final int? thumbnailCacheWidth;
 
   const PhotoTile({
     super.key,
@@ -27,10 +32,28 @@ class PhotoTile extends StatelessWidget {
     this.onLongPress,
     this.onMoveToTrash,
     this.onToggleStar,
+    this.onShare,
+    this.onAddToCollection,
     this.isStarred = false,
     this.selected = false,
     this.selectionMode = false,
+    this.isTrashView = false,
+    this.onRestore,
+    this.thumbnailCacheWidth,
   });
+
+  RelativeRect _menuPosition(BuildContext context) {
+    final renderBox = context.findRenderObject() as RenderBox;
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final rect = Rect.fromPoints(
+      renderBox.localToGlobal(Offset.zero, ancestor: overlay),
+      renderBox.localToGlobal(
+        renderBox.size.bottomRight(Offset.zero),
+        ancestor: overlay,
+      ),
+    );
+    return RelativeRect.fromRect(rect, Offset.zero & overlay.size);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -53,39 +76,44 @@ class PhotoTile extends StatelessWidget {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              photoService != null 
-                ? AuthenticatedImage(
-                    photoService: photoService!,
-                    fileKey: fileKey,
-                    fallbackUrl: imageUrl,
-                    fit: BoxFit.cover,
-                  )
-                : Image.network(
-                    imageUrl,
-                    fit: BoxFit.cover,
-                    loadingBuilder: (context, child, loadingProgress) {
-                      if (loadingProgress == null) return child;
-                      return Center(
-                        child: CircularProgressIndicator(
-                          value: loadingProgress.expectedTotalBytes != null
-                              ? loadingProgress.cumulativeBytesLoaded /
-                                  loadingProgress.expectedTotalBytes!
-                              : null,
-                        ),
-                      );
-                    },
-                    errorBuilder: (context, error, stackTrace) {
-                      return Container(
-                        color: Colors.grey[300],
-                        child: const Icon(
-                          Icons.error,
-                          color: Colors.red,
-                          size: 32,
-                        ),
-                      );
-                    },
-                  ),
-              if (onDelete != null)
+              Hero(
+                tag: 'photo-$photoId',
+                child: photoService != null
+                    ? AuthenticatedImage(
+                        photoService: photoService!,
+                        fileKey: fileKey,
+                        fallbackUrl: imageUrl,
+                        fit: BoxFit.cover,
+                        cacheWidth: thumbnailCacheWidth ?? 400,
+                      )
+                    : Image.network(
+                        imageUrl,
+                        fit: BoxFit.cover,
+                        cacheWidth: thumbnailCacheWidth ?? 400,
+                        loadingBuilder: (context, child, loadingProgress) {
+                          if (loadingProgress == null) return child;
+                          return Center(
+                            child: CircularProgressIndicator(
+                              value: loadingProgress.expectedTotalBytes != null
+                                  ? loadingProgress.cumulativeBytesLoaded /
+                                        loadingProgress.expectedTotalBytes!
+                                  : null,
+                            ),
+                          );
+                        },
+                        errorBuilder: (context, error, stackTrace) {
+                          return Container(
+                            color: Colors.grey[300],
+                            child: const Icon(
+                              Icons.error,
+                              color: Colors.red,
+                              size: 32,
+                            ),
+                          );
+                        },
+                      ),
+              ),
+              if (onDelete != null && !isTrashView)
                 Positioned(
                   top: 4,
                   right: 4,
@@ -97,7 +125,9 @@ class PhotoTile extends StatelessWidget {
                     child: IconButton(
                       icon: Icon(
                         selectionMode ? Icons.check_circle : Icons.more_vert,
-                        color: selectionMode ? const Color(0xFF7B2D8B) : Colors.black87,
+                        color: selectionMode
+                            ? const Color(0xFF7B2D8B)
+                            : Colors.black87,
                         size: 20,
                       ),
                       onPressed: selectionMode
@@ -105,15 +135,40 @@ class PhotoTile extends StatelessWidget {
                           : () async {
                               final value = await showMenu<String>(
                                 context: context,
-                                position: const RelativeRect.fromLTRB(1000, 100, 8, 0),
+                                position: _menuPosition(context),
                                 items: [
                                   PopupMenuItem(
                                     value: 'star',
                                     child: Row(
                                       children: [
-                                        Icon(isStarred ? Icons.star : Icons.star_border, color: Colors.amber),
+                                        Icon(
+                                          isStarred
+                                              ? Icons.star
+                                              : Icons.star_border,
+                                          color: Colors.amber,
+                                        ),
                                         const SizedBox(width: 8),
                                         Text(isStarred ? 'Unstar' : 'Star'),
+                                      ],
+                                    ),
+                                  ),
+                                  const PopupMenuItem(
+                                    value: 'add_to_collection',
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.playlist_add),
+                                        SizedBox(width: 8),
+                                        Text('Add to Collection'),
+                                      ],
+                                    ),
+                                  ),
+                                  const PopupMenuItem(
+                                    value: 'share',
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.share_outlined),
+                                        SizedBox(width: 8),
+                                        Text('Share'),
                                       ],
                                     ),
                                   ),
@@ -121,7 +176,10 @@ class PhotoTile extends StatelessWidget {
                                     value: 'trash',
                                     child: Row(
                                       children: [
-                                        Icon(Icons.delete_outline, color: Colors.red),
+                                        Icon(
+                                          Icons.delete_outline,
+                                          color: Colors.red,
+                                        ),
                                         SizedBox(width: 8),
                                         Text('Move to Trash'),
                                       ],
@@ -131,7 +189,10 @@ class PhotoTile extends StatelessWidget {
                                     value: 'delete',
                                     child: Row(
                                       children: [
-                                        Icon(Icons.delete_forever, color: Colors.red),
+                                        Icon(
+                                          Icons.delete_forever,
+                                          color: Colors.red,
+                                        ),
                                         SizedBox(width: 8),
                                         Text('Delete permanently'),
                                       ],
@@ -140,6 +201,8 @@ class PhotoTile extends StatelessWidget {
                                 ],
                               );
                               if (value == 'star') onToggleStar?.call();
+                              if (value == 'add_to_collection') onAddToCollection?.call();
+                              if (value == 'share') onShare?.call();
                               if (value == 'trash') onMoveToTrash?.call();
                               if (value == 'delete') onDelete?.call();
                             },
@@ -151,25 +214,56 @@ class PhotoTile extends StatelessWidget {
                     ),
                   ),
                 ),
-              Positioned(
-                bottom: 4,
-                right: 4,
-                child: IconButton(
-                  icon: Icon(
-                    isStarred ? Icons.star : Icons.star_border,
-                    color: Colors.amber,
-                  ),
-                  onPressed: onToggleStar,
-                  style: IconButton.styleFrom(
-                    backgroundColor: Colors.white.withValues(alpha: 0.9),
+              if (isTrashView)
+                Positioned(
+                  top: 4,
+                  right: 4,
+                  child: Container(
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                    ),
+                    child: IconButton(
+                      icon: const Icon(
+                        Icons.restore,
+                        color: Color(0xFF7B2D8B),
+                        size: 20,
+                      ),
+                      onPressed: onRestore,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 32,
+                        minHeight: 32,
+                      ),
+                    ),
                   ),
                 ),
-              ),
+              if (!isTrashView)
+                Positioned(
+                  bottom: 4,
+                  right: 4,
+                  child: IconButton(
+                    icon: Icon(
+                      isStarred ? Icons.star : Icons.star_border,
+                      color: Colors.amber,
+                    ),
+                    onPressed: onToggleStar,
+                    style: IconButton.styleFrom(
+                      backgroundColor: Colors.white.withValues(alpha: 0.9),
+                    ),
+                  ),
+                ),
               if (selected)
                 Container(
                   decoration: BoxDecoration(
-                    border: Border.all(color: const Color(0xFF7B2D8B), width: 3),
-                    borderRadius: BorderRadius.circular(8),
+                    color: const Color(0x553B82F6),
+                  ),
+                  child: const Align(
+                    alignment: Alignment.topRight,
+                    child: Padding(
+                      padding: EdgeInsets.all(6),
+                      child: Icon(Icons.check_circle, color: Color(0xFF2563EB)),
+                    ),
                   ),
                 ),
             ],

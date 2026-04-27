@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
 import '../services/photo_service.dart';
 import '../services/api_client.dart';
 import '../services/token_store.dart';
 import '../services/auth_service.dart';
 import '../services/health_service.dart';
 import '../widgets/photo_tile.dart';
+import 'photo_viewer_screen.dart';
 
 class GalleryScreen extends StatefulWidget {
   const GalleryScreen({super.key});
@@ -24,6 +28,11 @@ class _GalleryScreenState extends State<GalleryScreen> {
   late final TokenStore _tokenStore;
   bool _selectionMode = false;
   final Set<String> _selectedPhotoIds = <String>{};
+  bool get _isMobilePlatform {
+    if (kIsWeb) return false;
+    return defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS;
+  }
 
   @override
   void initState() {
@@ -63,17 +72,18 @@ class _GalleryScreenState extends State<GalleryScreen> {
     setState(() => _loading = true);
     try {
       final health = await _healthService.check();
-      _backendOk = health.ok;
       final photos = await _photoService.list();
       if (!mounted) return;
       setState(() {
+        _backendOk = health.ok;
         _photos = photos;
         _loading = false;
       });
     } catch (e) {
       // If unauthorized, attempt a token refresh once and retry
       final message = e.toString();
-      if (message.contains('401') || message.toLowerCase().contains('access token required')) {
+      if (message.contains('401') ||
+          message.toLowerCase().contains('access token required')) {
         try {
           final refreshed = await _authService.refreshToken();
           if (refreshed.success) {
@@ -89,6 +99,7 @@ class _GalleryScreenState extends State<GalleryScreen> {
       }
       if (!mounted) return;
       setState(() => _loading = false);
+      setState(() => _backendOk = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error loading photos: $e'),
@@ -96,6 +107,13 @@ class _GalleryScreenState extends State<GalleryScreen> {
         ),
       );
     }
+  }
+
+  int _gridColumns(double width) {
+    if (width < 600) return 3;
+    if (width < 1024) return 4;
+    if (width < 1440) return 6;
+    return 8;
   }
 
   void _delete(String id) async {
@@ -123,13 +141,16 @@ class _GalleryScreenState extends State<GalleryScreen> {
       await _photoService.moveToTrash(id);
       await _fetchPhotos();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Moved to Trash')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Moved to Trash')));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Move to Trash failed: $e'), backgroundColor: Colors.red),
+        SnackBar(
+          content: Text('Move to Trash failed: $e'),
+          backgroundColor: Colors.red,
+        ),
       );
     }
   }
@@ -141,7 +162,10 @@ class _GalleryScreenState extends State<GalleryScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Star update failed: $e'), backgroundColor: Colors.red),
+        SnackBar(
+          content: Text('Star update failed: $e'),
+          backgroundColor: Colors.red,
+        ),
       );
     }
   }
@@ -163,26 +187,53 @@ class _GalleryScreenState extends State<GalleryScreen> {
     try {
       final collections = await _photoService.listCollections();
       if (!mounted) return;
-      if (collections.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Create a collection first in Collections')),
-        );
-        return;
-      }
-      final collectionId = await showDialog<String>(
+      final collectionId = await showModalBottomSheet<String>(
         context: context,
-        builder: (context) => SimpleDialog(
-          title: const Text('Add to collection'),
-          children: collections
-              .map((c) => SimpleDialogOption(
-                    onPressed: () => Navigator.pop(context, c.id),
-                    child: Text(c.name),
-                  ))
-              .toList(),
+        showDragHandle: true,
+        builder: (context) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.create_new_folder_outlined),
+                title: const Text('New Collection'),
+                onTap: () => Navigator.pop(context, '__new__'),
+              ),
+              ...collections.map(
+                (c) => ListTile(
+                  title: Text(c.name),
+                  subtitle: Text('${c.photoCount} photos'),
+                  onTap: () => Navigator.pop(context, c.id),
+                ),
+              ),
+            ],
+          ),
         ),
       );
       if (collectionId == null) return;
-      await _photoService.addPhotosToCollection(collectionId, _selectedPhotoIds.toList());
+      var targetCollectionId = collectionId;
+      if (collectionId == '__new__') {
+        final controller = TextEditingController();
+        final name = await showDialog<String>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('New collection'),
+            content: TextField(controller: controller),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+              ElevatedButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('Create')),
+            ],
+          ),
+        );
+        if (name == null || name.isEmpty) return;
+        await _photoService.createCollection(name);
+        final refreshed = await _photoService.listCollections();
+        targetCollectionId = refreshed.first.id;
+      }
+      await _photoService.addPhotosToCollection(
+        targetCollectionId,
+        _selectedPhotoIds.toList(),
+      );
       if (!mounted) return;
       setState(() {
         _selectionMode = false;
@@ -199,11 +250,51 @@ class _GalleryScreenState extends State<GalleryScreen> {
     }
   }
 
+  Future<void> _sharePhoto(PhotoItem photo) async {
+    if (_isMobilePlatform) {
+      final bytes = await NetworkAssetBundle(Uri.parse(photo.url)).load(photo.url);
+      await Share.shareXFiles(
+        [
+          XFile.fromData(
+            bytes.buffer.asUint8List(),
+            name: photo.filename,
+            mimeType: 'image/*',
+          ),
+        ],
+        text: photo.filename,
+      );
+      return;
+    }
+    final link = await _photoService.createPhotoShareLink(photo.id);
+    if (!mounted) return;
+    await Clipboard.setData(ClipboardData(text: link.url));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Link copied to clipboard')),
+    );
+  }
+
+  Future<void> _shareSelected() async {
+    if (_selectedPhotoIds.isEmpty) return;
+    final selected = _photos.where((p) => _selectedPhotoIds.contains(p.id)).toList();
+    if (_isMobilePlatform) {
+      final files = <XFile>[];
+      for (final photo in selected) {
+        final bytes = await NetworkAssetBundle(Uri.parse(photo.url)).load(photo.url);
+        files.add(XFile.fromData(bytes.buffer.asUint8List(), name: photo.filename, mimeType: 'image/*'));
+      }
+      await Share.shareXFiles(files);
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Use web download flow for multi-share zip')),
+    );
+  }
+
   void _logout() async {
     try {
       final result = await _authService.logout();
       if (!mounted) return;
-      
+
       if (result.success) {
         Navigator.pushReplacementNamed(context, '/login');
       } else {
@@ -229,7 +320,11 @@ class _GalleryScreenState extends State<GalleryScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_selectionMode ? '${_selectedPhotoIds.length} selected' : 'Nexus Photo'),
+        title: Text(
+          _selectionMode
+              ? '${_selectedPhotoIds.length} selected'
+              : 'Nexus Photo',
+        ),
         actions: [
           if (_selectionMode)
             IconButton(
@@ -274,15 +369,42 @@ class _GalleryScreenState extends State<GalleryScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
               child: Row(
                 children: [
-                  const Expanded(child: Text('Backend offline. Some features may not work.')),
+                  const Expanded(
+                    child: Text('Backend offline. Some features may not work.'),
+                  ),
                   IconButton(
                     icon: const Icon(Icons.close, size: 18),
-                    onPressed: () => setState(() => _dismissedOfflineBanner = true),
+                    onPressed: () =>
+                        setState(() => _dismissedOfflineBanner = true),
                   ),
                 ],
               ),
             ),
           Expanded(child: _buildPhotoContent()),
+          if (_selectionMode)
+            SafeArea(
+              top: false,
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                color: Colors.white,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: _addSelectedToCollection,
+                        icon: const Icon(Icons.playlist_add),
+                        label: const Text('Add to Collection'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      onPressed: _shareSelected,
+                      icon: const Icon(Icons.share_outlined),
+                    ),
+                  ],
+                ),
+              ),
+            ),
         ],
       ),
       drawer: Drawer(
@@ -293,7 +415,10 @@ class _GalleryScreenState extends State<GalleryScreen> {
               decoration: BoxDecoration(color: Color(0xFF7B2D8B)),
               child: Align(
                 alignment: Alignment.bottomLeft,
-                child: Text('Nexus Photos', style: TextStyle(color: Colors.white, fontSize: 20)),
+                child: Text(
+                  'Nexus Photos',
+                  style: TextStyle(color: Colors.white, fontSize: 20),
+                ),
               ),
             ),
             ListTile(
@@ -336,53 +461,77 @@ class _GalleryScreenState extends State<GalleryScreen> {
         child: Text('No photos yet', style: TextStyle(color: Colors.grey)),
       );
     }
-    return RefreshIndicator(
-      onRefresh: _fetchPhotos,
-      child: GridView.builder(
-        padding: const EdgeInsets.all(8),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          crossAxisSpacing: 8,
-          mainAxisSpacing: 8,
-          childAspectRatio: 1,
-        ),
-        itemCount: _photos.length,
-        itemBuilder: (context, index) {
-          final photo = _photos[index];
-          return PhotoTile(
-            imageUrl: photo.url,
-            photoId: photo.id,
-            fileKey: photo.fileKey,
-            photoService: _photoService,
-            onDelete: () => _delete(photo.id),
-            onMoveToTrash: () => _moveToTrash(photo.id),
-            onToggleStar: () => _toggleStar(photo),
-            isStarred: photo.isStarred,
-            selectionMode: _selectionMode,
-            selected: _selectedPhotoIds.contains(photo.id),
-            onLongPress: () {
-              setState(() {
-                _selectionMode = true;
-                _selectedPhotoIds.add(photo.id);
-              });
-            },
-            onTap: () {
-              if (_selectionMode) {
-                setState(() {
-                  if (_selectedPhotoIds.contains(photo.id)) {
-                    _selectedPhotoIds.remove(photo.id);
-                  } else {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = _gridColumns(constraints.maxWidth);
+        return RefreshIndicator(
+          onRefresh: _fetchPhotos,
+          child: GridView.builder(
+            padding: const EdgeInsets.all(8),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: columns,
+              crossAxisSpacing: 8,
+              mainAxisSpacing: 8,
+              childAspectRatio: 1,
+            ),
+            itemCount: _photos.length,
+            itemBuilder: (context, index) {
+              final photo = _photos[index];
+              return PhotoTile(
+                imageUrl: photo.thumbnailUrl ?? photo.url,
+                photoId: photo.id,
+                fileKey: photo.fileKey,
+                photoService: _photoService,
+                thumbnailCacheWidth: 400,
+                onDelete: () => _delete(photo.id),
+                onMoveToTrash: () => _moveToTrash(photo.id),
+                onToggleStar: () => _toggleStar(photo),
+                onShare: () => _sharePhoto(photo),
+                onAddToCollection: () async {
+                  setState(() {
+                    _selectionMode = true;
                     _selectedPhotoIds.add(photo.id);
+                  });
+                  await _addSelectedToCollection();
+                },
+                isStarred: photo.isStarred,
+                selectionMode: _selectionMode,
+                selected: _selectedPhotoIds.contains(photo.id),
+                onLongPress: () {
+                  setState(() {
+                    _selectionMode = true;
+                    _selectedPhotoIds.add(photo.id);
+                  });
+                },
+                onTap: () {
+                  if (_selectionMode) {
+                    setState(() {
+                      if (_selectedPhotoIds.contains(photo.id)) {
+                        _selectedPhotoIds.remove(photo.id);
+                      } else {
+                        _selectedPhotoIds.add(photo.id);
+                      }
+                      if (_selectedPhotoIds.isEmpty) {
+                        _selectionMode = false;
+                      }
+                    });
+                    return;
                   }
-                  if (_selectedPhotoIds.isEmpty) {
-                    _selectionMode = false;
-                  }
-                });
-              }
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => PhotoViewerScreen(
+                        photos: _photos,
+                        initialIndex: index,
+                        photoService: _photoService,
+                      ),
+                    ),
+                  );
+                },
+              );
             },
-          );
-        },
-      ),
+          ),
+        );
+      },
     );
   }
 }

@@ -3,6 +3,7 @@ import '../services/api_client.dart';
 import '../services/photo_service.dart';
 import '../services/token_store.dart';
 import '../widgets/photo_tile.dart';
+import 'photo_viewer_screen.dart';
 
 class FavouritesScreen extends StatefulWidget {
   const FavouritesScreen({super.key});
@@ -43,6 +44,13 @@ class _FavouritesScreenState extends State<FavouritesScreen> {
     await _load();
   }
 
+  int _gridColumns(double width) {
+    if (width < 600) return 3;
+    if (width < 1024) return 4;
+    if (width < 1440) return 6;
+    return 8;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -50,27 +58,45 @@ class _FavouritesScreenState extends State<FavouritesScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _photos.isEmpty
-              ? const Center(child: Text('No starred photos yet'))
-              : GridView.builder(
+          ? const Center(child: Text('No starred photos yet'))
+          : LayoutBuilder(
+              builder: (context, constraints) {
+                final columns = _gridColumns(constraints.maxWidth);
+                return GridView.builder(
                   padding: const EdgeInsets.all(8),
                   itemCount: _photos.length,
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: columns,
                     crossAxisSpacing: 8,
                     mainAxisSpacing: 8,
+                    childAspectRatio: 1,
                   ),
                   itemBuilder: (context, index) {
                     final p = _photos[index];
                     return PhotoTile(
-                      imageUrl: p.url,
+                      imageUrl: p.thumbnailUrl ?? p.url,
                       photoId: p.id,
                       fileKey: p.fileKey,
                       photoService: _photoService,
+                      thumbnailCacheWidth: 400,
                       isStarred: p.isStarred,
                       onToggleStar: () => _toggle(p),
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => PhotoViewerScreen(
+                              photos: _photos,
+                              initialIndex: index,
+                              photoService: _photoService,
+                            ),
+                          ),
+                        );
+                      },
                     );
                   },
-                ),
+                );
+              },
+            ),
     );
   }
 }
