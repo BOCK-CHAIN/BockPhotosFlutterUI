@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shimmer/shimmer.dart';
 import '../services/photo_service.dart';
 
 class AuthenticatedImage extends StatefulWidget {
@@ -63,11 +64,18 @@ class _AuthenticatedImageState extends State<AuthenticatedImage> {
     }
   }
 
+  Widget _defaultShimmer() {
+    return Shimmer.fromColors(
+      baseColor: Colors.grey.shade300,
+      highlightColor: Colors.grey.shade100,
+      child: Container(color: Colors.grey.shade300),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return widget.loadingWidget ??
-          const Center(child: CircularProgressIndicator());
+      return widget.loadingWidget ?? _defaultShimmer();
     }
 
     final imageUrl = _authenticatedUrl ?? widget.fallbackUrl;
@@ -78,15 +86,7 @@ class _AuthenticatedImageState extends State<AuthenticatedImage> {
       cacheWidth: widget.cacheWidth,
       loadingBuilder: (context, child, loadingProgress) {
         if (loadingProgress == null) return child;
-        return widget.loadingWidget ??
-            Center(
-              child: CircularProgressIndicator(
-                value: loadingProgress.expectedTotalBytes != null
-                    ? loadingProgress.cumulativeBytesLoaded /
-                          loadingProgress.expectedTotalBytes!
-                    : null,
-              ),
-            );
+        return widget.loadingWidget ?? _defaultShimmer();
       },
       errorBuilder: (context, error, stackTrace) {
         // If we tried authenticated URL and it failed, try fallback URL

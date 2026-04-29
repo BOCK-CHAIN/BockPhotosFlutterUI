@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -27,6 +28,8 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
   late final PageController _controller;
   late int _index;
   bool _chromeVisible = true;
+  bool _pagingEnabled = true;
+  double _verticalDragOffset = 0;
   final Map<String, PhotoItem> _photoDetailsById = <String, PhotoItem>{};
 
   @override
@@ -34,6 +37,14 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
     super.initState();
     _index = widget.initialIndex;
     _controller = PageController(initialPage: widget.initialIndex);
+    SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle.light);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle.dark);
+    super.dispose();
   }
 
   PhotoItem get _current => widget.photos[_index];
@@ -57,6 +68,20 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
     return '${(size / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 
+  String _resolutionText(PhotoMetadata metadata) {
+    final w = metadata.width ?? _current.width;
+    final h = metadata.height ?? _current.height;
+    if (w == null || h == null) return 'Unknown';
+    return '${w}x$h';
+  }
+
+  String _locationText(PhotoMetadata metadata) {
+    final lat = metadata.locationLat ?? _current.locationLat;
+    final lng = metadata.locationLng ?? _current.locationLng;
+    if (lat == null || lng == null) return 'Unknown';
+    return '${lat.toStringAsFixed(5)}, ${lng.toStringAsFixed(5)}';
+  }
+
   Future<void> _showInfoSheet() async {
     try {
       if (_currentResolved.filename.isEmpty || _currentResolved.uploadedAt == null) {
@@ -67,8 +92,6 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
         });
       }
       final metadata = await widget.photoService.getPhotoMetadata(_current.id);
-      print('[PhotoViewerScreen] metadata API response for ${_current.id}: '
-          'file_name=${metadata.fileName}, file_size=${metadata.fileSize}, uploaded_at=${metadata.uploadedAt}');
       if (!mounted) return;
       await showModalBottomSheet<void>(
         context: context,
@@ -101,7 +124,11 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
                 leading: const Text('📅'),
                 title: const Text('Date', style: TextStyle(color: Colors.grey)),
                 trailing: Text(
-                  _dateText(metadata.uploadedAt ?? _currentResolved.uploadedAt ?? _currentResolved.createdAt),
+                  _dateText(
+                    metadata.uploadedAt ??
+                        _currentResolved.uploadedAt ??
+                        _currentResolved.createdAt,
+                  ),
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
               ),
@@ -111,6 +138,30 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
                 title: const Text('Size', style: TextStyle(color: Colors.grey)),
                 trailing: Text(
                   _sizeText(metadata.fileSize ?? _currentResolved.size),
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              ListTile(
+                dense: true,
+                leading: const Text('🧭'),
+                title: const Text(
+                  'Resolution',
+                  style: TextStyle(color: Colors.grey),
+                ),
+                trailing: Text(
+                  _resolutionText(metadata),
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              ListTile(
+                dense: true,
+                leading: const Text('📍'),
+                title: const Text(
+                  'Location',
+                  style: TextStyle(color: Colors.grey),
+                ),
+                trailing: Text(
+                  _locationText(metadata),
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
               ),
@@ -130,6 +181,7 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
     final share = await widget.photoService.createPhotoShareLink(_current.id);
     if (!mounted) return;
     final link = share.url;
+    final rootContext = context;
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
@@ -137,11 +189,10 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
         content: SelectableText(link),
         actions: [
           TextButton(
-            onPressed: () async {
-              await Clipboard.setData(ClipboardData(text: link));
-              if (!mounted) return;
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: link));
               Navigator.pop(context);
-              ScaffoldMessenger.of(this.context).showSnackBar(
+              ScaffoldMessenger.of(rootContext).showSnackBar(
                 const SnackBar(content: Text('Link copied to clipboard')),
               );
             },
@@ -149,14 +200,18 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
           ),
           TextButton(
             onPressed: () async {
-              final uri = Uri.parse('https://wa.me/?text=${Uri.encodeComponent(link)}');
+              final uri = Uri.parse(
+                'https://wa.me/?text=${Uri.encodeComponent(link)}',
+              );
               await launchUrl(uri, mode: LaunchMode.externalApplication);
             },
             child: const Text('WhatsApp'),
           ),
           TextButton(
             onPressed: () async {
-              final uri = Uri.parse('mailto:?subject=Shared photo&body=${Uri.encodeComponent(link)}');
+              final uri = Uri.parse(
+                'mailto:?subject=Shared photo&body=${Uri.encodeComponent(link)}',
+              );
               await launchUrl(uri, mode: LaunchMode.externalApplication);
             },
             child: const Text('Email'),
@@ -168,7 +223,9 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
 
   Future<void> _shareCurrentPhoto() async {
     if (_isMobilePlatform) {
-      final bytes = await NetworkAssetBundle(Uri.parse(_current.url)).load(_current.url);
+      final bytes = await NetworkAssetBundle(Uri.parse(_current.url)).load(
+        _current.url,
+      );
       await Share.shareXFiles(
         [
           XFile.fromData(
@@ -184,180 +241,280 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
     await _showShareLinkDialog();
   }
 
-  Future<void> _addToCollection() async {
-    final collections = await widget.photoService.listCollections();
-    if (!mounted) return;
-    final selected = await showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.create_new_folder_outlined),
-              title: const Text('New Collection'),
-              onTap: () => Navigator.pop(context, '__new__'),
-            ),
-            ...collections.map(
-              (c) => ListTile(
-                title: Text(c.name),
-                subtitle: Text('${c.photoCount} photos'),
-                onTap: () => Navigator.pop(context, c.id),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (selected == null) return;
-    String targetId = selected;
-    if (selected == '__new__') {
-      final controller = TextEditingController();
-      final name = await showDialog<String>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('New collection'),
-          content: TextField(controller: controller),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-            ElevatedButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('Create')),
-          ],
-        ),
-      );
-      if (name == null || name.isEmpty) return;
-      await widget.photoService.createCollection(name, coverPhotoId: _current.id);
-      final refreshed = await widget.photoService.listCollections();
-      targetId = refreshed.first.id;
+  Future<void> _downloadCurrentPhoto() async {
+    final uri = Uri.parse(_current.url);
+    if (kIsWeb) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+      return;
     }
-    await widget.photoService.addPhotosToCollection(targetId, [_current.id]);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Added to collection')),
+
+    final bytes = await http.readBytes(uri);
+    await Share.shareXFiles(
+      [
+        XFile.fromData(
+          bytes,
+          name: _current.filename.isEmpty ? 'photo.jpg' : _current.filename,
+          mimeType: 'image/*',
+        ),
+      ],
+      text: 'Downloaded ${_current.filename}',
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final currentPhoto = _current;
     return Scaffold(
       backgroundColor: Colors.black,
-      appBar: _chromeVisible
-          ? AppBar(
-              backgroundColor: Colors.black,
-              foregroundColor: Colors.white,
-              title: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _current.filename,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  Text(
-                    _dateText(_current.takenAt ?? _current.createdAt),
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                ],
-              ),
-            )
-          : null,
-      body: GestureDetector(
-        onTap: () => setState(() => _chromeVisible = !_chromeVisible),
-        onVerticalDragEnd: (details) {
-          if ((details.primaryVelocity ?? 0) > 800) {
-            Navigator.of(context).pop();
-          }
-        },
-        child: PageView.builder(
-          controller: _controller,
-          itemCount: widget.photos.length,
-          onPageChanged: (value) => setState(() => _index = value),
-          itemBuilder: (context, index) {
-            final photo = widget.photos[index];
-            return Center(
-              child: Hero(
-                tag: 'photo-${photo.id}',
-                child: InteractiveViewer(
-                  minScale: 0.5,
-                  maxScale: 4,
-                  child: photo.fileKey != null
-                      ? AuthenticatedImage(
-                          photoService: widget.photoService,
-                          fileKey: photo.fileKey,
-                          fallbackUrl: photo.url,
-                          fit: BoxFit.contain,
-                        )
-                      : Image.network(photo.url, fit: BoxFit.contain),
-                ),
-              ),
-            );
-          },
-        ),
-      ),
-      bottomNavigationBar: _chromeVisible
-          ? BottomAppBar(
-              color: Colors.black,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  IconButton(
-                    color: Colors.white,
-                    icon: const Icon(Icons.share_outlined),
-                    onPressed: _shareCurrentPhoto,
-                  ),
-                  IconButton(
-                    color: Colors.white,
-                    icon: Icon(
-                      _current.isStarred ? Icons.star : Icons.star_border,
+      body: Stack(
+        children: [
+          GestureDetector(
+            onTap: () => setState(() => _chromeVisible = !_chromeVisible),
+            onVerticalDragUpdate: (details) {
+              if (!_pagingEnabled) return;
+              setState(() {
+                _verticalDragOffset =
+                    (_verticalDragOffset + details.delta.dy).clamp(0, 260);
+              });
+            },
+            onVerticalDragEnd: (details) {
+              final velocity = details.primaryVelocity ?? 0;
+              final shouldClose =
+                  velocity > 500 || _verticalDragOffset > 150;
+              if (shouldClose) {
+                Navigator.of(context).pop();
+                return;
+              }
+              setState(() => _verticalDragOffset = 0);
+            },
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              transform: Matrix4.translationValues(0, _verticalDragOffset, 0),
+              child: PageView.builder(
+                controller: _controller,
+                physics: _pagingEnabled
+                    ? const PageScrollPhysics()
+                    : const NeverScrollableScrollPhysics(),
+                itemCount: widget.photos.length,
+                onPageChanged: (value) {
+                  setState(() {
+                    _index = value;
+                    _pagingEnabled = true;
+                  });
+                },
+                itemBuilder: (context, index) {
+                  final photo = widget.photos[index];
+                  return Center(
+                    child: Hero(
+                      tag: 'photo_${photo.id}',
+                      child: InteractiveViewer(
+                        minScale: 0.5,
+                        maxScale: 5.0,
+                        onInteractionUpdate: (details) {
+                          if (_index != index) return;
+                          final isZoomed = details.scale > 1.01;
+                          if (isZoomed != !_pagingEnabled) {
+                            setState(() => _pagingEnabled = !isZoomed);
+                          }
+                        },
+                        onInteractionEnd: (details) {
+                          if (_index != index) return;
+                          setState(() => _pagingEnabled = true);
+                        },
+                        child: photo.fileKey != null
+                            ? AuthenticatedImage(
+                                photoService: widget.photoService,
+                                fileKey: photo.fileKey,
+                                fallbackUrl: photo.url,
+                                fit: BoxFit.contain,
+                              )
+                            : Image.network(photo.url, fit: BoxFit.contain),
+                      ),
                     ),
-                    onPressed: () async {
-                      final messenger = ScaffoldMessenger.of(context);
-                      final photoId = _current.id;
-                      final nextStarValue = !_current.isStarred;
-                      await widget.photoService.setStarred(
-                        photoId,
-                        nextStarValue,
-                      );
-                      if (!mounted) return;
-                      messenger.showSnackBar(
-                        const SnackBar(content: Text('Star status updated')),
-                      );
-                    },
-                  ),
-                  IconButton(
-                    color: Colors.white,
-                    icon: const Icon(Icons.info_outline),
-                    onPressed: _showInfoSheet,
-                  ),
-                  PopupMenuButton<String>(
-                    iconColor: Colors.white,
-                    onSelected: (value) async {
-                      if (value == 'collection') {
-                        await _addToCollection();
-                      } else if (value == 'share') {
-                        await _shareCurrentPhoto();
-                      }
-                    },
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(value: 'collection', child: Text('Add to Collection')),
-                      PopupMenuItem(value: 'share', child: Text('Share')),
+                  );
+                },
+              ),
+            ),
+          ),
+          Positioned(
+            top: MediaQuery.of(context).padding.top,
+            left: 0,
+            right: 0,
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 200),
+              opacity: _chromeVisible ? 1 : 0,
+              child: IgnorePointer(
+                ignoring: !_chromeVisible,
+                child: Container(
+                  color: Colors.black.withValues(alpha: 0.75),
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(Icons.arrow_back, color: Colors.white),
+                      ),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              currentPhoto.filename,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                            Text(
+                              _dateText(
+                                currentPhoto.takenAt ?? currentPhoto.createdAt,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
-                  IconButton(
-                    color: Colors.white,
-                    icon: const Icon(Icons.delete_outline),
-                    onPressed: () async {
-                      final navigator = Navigator.of(context);
-                      final photoId = _current.id;
-                      await widget.photoService.moveToTrash(photoId);
-                      if (!mounted) return;
-                      navigator.pop();
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: 8,
+            top: 0,
+            bottom: 0,
+            child: Center(
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 200),
+                opacity: _chromeVisible && _index > 0 ? 1 : 0,
+                child: IgnorePointer(
+                  ignoring: !(_chromeVisible && _index > 0),
+                  child: IconButton(
+                    style: IconButton.styleFrom(
+                      backgroundColor: Colors.black.withValues(alpha: 0.45),
+                    ),
+                    icon: const Icon(Icons.chevron_left, color: Colors.white),
+                    onPressed: () {
+                      _controller.previousPage(
+                        duration: const Duration(milliseconds: 220),
+                        curve: Curves.easeOut,
+                      );
                     },
                   ),
-                ],
+                ),
               ),
-            )
-          : null,
+            ),
+          ),
+          Positioned(
+            right: 8,
+            top: 0,
+            bottom: 0,
+            child: Center(
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 200),
+                opacity: _chromeVisible && _index < widget.photos.length - 1
+                    ? 1
+                    : 0,
+                child: IgnorePointer(
+                  ignoring:
+                      !(_chromeVisible && _index < widget.photos.length - 1),
+                  child: IconButton(
+                    style: IconButton.styleFrom(
+                      backgroundColor: Colors.black.withValues(alpha: 0.45),
+                    ),
+                    icon: const Icon(Icons.chevron_right, color: Colors.white),
+                    onPressed: () {
+                      _controller.nextPage(
+                        duration: const Duration(milliseconds: 220),
+                        curve: Curves.easeOut,
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 200),
+              opacity: _chromeVisible ? 1 : 0,
+              child: IgnorePointer(
+                ignoring: !_chromeVisible,
+                child: Container(
+                  color: Colors.black.withValues(alpha: 0.85),
+                  padding: EdgeInsets.only(
+                    left: 8,
+                    right: 8,
+                    bottom: MediaQuery.of(context).padding.bottom,
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      IconButton(
+                        color: Colors.white,
+                        icon: const Icon(Icons.share_outlined),
+                        onPressed: _shareCurrentPhoto,
+                      ),
+                      IconButton(
+                        color: Colors.white,
+                        icon: Icon(
+                          _current.isStarred ? Icons.star : Icons.star_border,
+                        ),
+                        onPressed: () async {
+                          final messenger = ScaffoldMessenger.of(context);
+                          final photoId = _current.id;
+                          final nextStarValue = !_current.isStarred;
+                          await widget.photoService.setStarred(
+                            photoId,
+                            nextStarValue,
+                          );
+                          if (!mounted) return;
+                          messenger.showSnackBar(
+                            const SnackBar(
+                              content: Text('Star status updated'),
+                            ),
+                          );
+                        },
+                      ),
+                      IconButton(
+                        color: Colors.white,
+                        icon: const Icon(Icons.info_outline),
+                        onPressed: _showInfoSheet,
+                      ),
+                      IconButton(
+                        color: Colors.white,
+                        icon: const Icon(Icons.download_outlined),
+                        onPressed: _downloadCurrentPhoto,
+                      ),
+                      IconButton(
+                        color: Colors.white,
+                        icon: const Icon(Icons.delete_outline),
+                        onPressed: () async {
+                          final navigator = Navigator.of(context);
+                          final photoId = _current.id;
+                          await widget.photoService.moveToTrash(photoId);
+                          if (!mounted) return;
+                          navigator.pop();
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

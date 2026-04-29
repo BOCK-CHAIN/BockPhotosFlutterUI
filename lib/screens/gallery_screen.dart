@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:share_plus/share_plus.dart';
 import '../services/photo_service.dart';
 import '../services/api_client.dart';
@@ -112,8 +113,8 @@ class _GalleryScreenState extends State<GalleryScreen> {
   int _gridColumns(double width) {
     if (width < 600) return 3;
     if (width < 1024) return 4;
-    if (width < 1440) return 6;
-    return 8;
+    if (width < 1440) return 5;
+    return 6;
   }
 
   void _delete(String id) async {
@@ -466,20 +467,23 @@ class _GalleryScreenState extends State<GalleryScreen> {
         final columns = _gridColumns(constraints.maxWidth);
         return RefreshIndicator(
           onRefresh: _fetchPhotos,
-          child: GridView.builder(
-            padding: const EdgeInsets.all(8),
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: columns,
-              crossAxisSpacing: 8,
-              mainAxisSpacing: 8,
-              childAspectRatio: 1,
-            ),
+          child: MasonryGridView.count(
+            padding: const EdgeInsets.all(2),
+            crossAxisCount: columns,
+            crossAxisSpacing: 2,
+            mainAxisSpacing: 2,
             itemCount: _photos.length,
             itemBuilder: (context, index) {
               final photo = _photos[index];
+              final width = photo.width ?? 1;
+              final height = photo.height ?? 1;
+              final aspectRatio = (width > 0 && height > 0)
+                  ? width / height
+                  : 1.0;
               return PhotoTile(
                 imageUrl: photo.thumbnailUrl ?? photo.url,
                 photoId: photo.id,
+                aspectRatio: aspectRatio,
                 fileKey: photo.fileKey,
                 photoService: _photoService,
                 thumbnailCacheWidth: 400,

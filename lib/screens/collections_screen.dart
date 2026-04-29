@@ -3,6 +3,7 @@ import '../services/api_client.dart';
 import '../services/photo_service.dart';
 import '../services/token_store.dart';
 import '../widgets/photo_tile.dart';
+import 'photo_viewer_screen.dart';
 
 class CollectionsScreen extends StatefulWidget {
   const CollectionsScreen({super.key});
@@ -297,6 +298,18 @@ class _CollectionPhotosScreenState extends State<CollectionPhotosScreen> {
     Navigator.of(context).pop();
   }
 
+  Future<void> _removeFromCollection(PhotoItem photo) async {
+    await widget.photoService.removePhotoFromCollection(
+      widget.collection.id,
+      photo.id,
+    );
+    await _load();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Removed from collection')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -331,6 +344,19 @@ class _CollectionPhotosScreenState extends State<CollectionPhotosScreen> {
                   photoId: photo.id,
                   fileKey: photo.fileKey,
                   photoService: widget.photoService,
+                  deleteMenuLabel: 'Remove from collection',
+                  onDelete: () => _removeFromCollection(photo),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => PhotoViewerScreen(
+                          photos: _photos,
+                          initialIndex: index,
+                          photoService: widget.photoService,
+                        ),
+                      ),
+                    );
+                  },
                 );
               },
             ),
